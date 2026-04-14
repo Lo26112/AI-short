@@ -46,16 +46,13 @@ COPY . .
 # Create a non-root user (Moved up)
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
 
-# Create directories including Ultralytics cache config
-RUN mkdir -p /app/uploads /app/output /tmp/Ultralytics
-# Fix permissions: /app for code/uploads, /tmp/Ultralytics for AI cache
-RUN chown -R appuser:appuser /app /tmp/Ultralytics
+# Create runtime directories
+RUN mkdir -p /app/uploads /app/output
+# Fix permissions: /app for code/uploads
+RUN chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
-
-# Pre-download YOLO model on build (now running as appuser)
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
 # Expose FastAPI port
 EXPOSE 8000

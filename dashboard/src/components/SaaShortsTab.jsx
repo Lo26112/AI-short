@@ -34,7 +34,7 @@ function saveCache(url, analysis, webResearch, scripts) {
   } catch { /* localStorage full */ }
 }
 
-export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uploadPostKey, uploadUserId }) {
+export default function SaaShortsTab({ uploadUserId }) {
   // Wizard state
   const [step, setStep] = useState(() => {
     const cache = loadCache();
@@ -109,12 +109,9 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
       .finally(() => setLoadingGallery(false));
   }, []);
 
-  // Fetch voices on mount
   useEffect(() => {
-    if (elevenLabsKey) {
-      fetchVoices();
-    }
-  }, [elevenLabsKey]);
+    fetchVoices();
+  }, []);
 
   // Reset selected voice when actor gender changes
   useEffect(() => {
@@ -172,9 +169,7 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
 
   const fetchVoices = async () => {
     try {
-      const res = await fetch(getApiUrl('/api/saasshorts/voices'), {
-        headers: { 'X-ElevenLabs-Key': elevenLabsKey },
-      });
+      const res = await fetch(getApiUrl('/api/saasshorts/voices'));
       if (res.ok) {
         const data = await res.json();
         setVoices(data.voices || []);
@@ -186,10 +181,6 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
 
   const handleAnalyze = async () => {
     if (!url.trim() && !description.trim()) return;
-    if (!geminiApiKey) {
-      setAnalyzeError('Gemini API key required. Set it in Settings.');
-      return;
-    }
 
     setAnalyzing(true);
     setAnalyzeError('');
@@ -199,7 +190,6 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Gemini-Key': geminiApiKey,
         },
         body: JSON.stringify({
           url: url.trim() || undefined,
@@ -250,15 +240,6 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
   };
 
   const handleGenerate = async () => {
-    if (!falKey) {
-      alert('fal.ai API key required. Set it in Settings.');
-      return;
-    }
-    if (!elevenLabsKey) {
-      alert('ElevenLabs API key required. Set it in Settings.');
-      return;
-    }
-
     setGenerating(true);
     setGenLogs(['Starting video generation...']);
     setGenStatus('processing');
@@ -278,8 +259,6 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Fal-Key': falKey,
-          'X-ElevenLabs-Key': elevenLabsKey,
         },
         body: JSON.stringify({
           script: scriptToSend,
@@ -324,8 +303,6 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Fal-Key': falKey,
-          'X-ElevenLabs-Key': elevenLabsKey,
         },
         body: JSON.stringify({
           script: scriptToSend,
@@ -1068,14 +1045,14 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
 
                 <button
                   onClick={async () => {
-                    if (!falKey || !actorDescription) return;
+                    if (!actorDescription) return;
                     setGeneratingActors(true);
                     setActorOptions([]);
                     setSelectedActor(null);
                     try {
                       const res = await fetch(getApiUrl('/api/saasshorts/actor-options'), {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Fal-Key': falKey },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ actor_description: actorDescription, num_options: 3 }),
                       });
                       if (res.ok) {
@@ -1091,7 +1068,7 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
                     } catch (e) { console.error(e); }
                     finally { setGeneratingActors(false); }
                   }}
-                  disabled={generatingActors || !falKey || !actorDescription}
+                  disabled={generatingActors || !actorDescription}
                   className="mt-2 w-full text-sm bg-violet-500/20 text-violet-300 px-4 py-2.5 rounded-lg hover:bg-violet-500/30 transition-colors disabled:opacity-40 flex items-center justify-center gap-2 font-medium"
                 >
                   {generatingActors ? <><Loader2 size={14} className="animate-spin" /> Generating 3 actors...</> : <><User size={14} /> {actorOptions.length > 0 ? 'Regenerate Actors' : 'Generate 3 New Actors'} (~$0.06)</>}
@@ -1158,14 +1135,6 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
                 </div>
               </div>
 
-              {/* Missing keys warning */}
-              {(!falKey || !elevenLabsKey) && (
-                <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-2 text-sm text-amber-400">
-                  <AlertCircle size={14} />
-                  {!falKey && 'fal.ai API key missing. '}{!elevenLabsKey && 'ElevenLabs API key missing. '}
-                  Set them in Settings.
-                </div>
-              )}
             </div>
 
             <div className="flex justify-between">
@@ -1174,7 +1143,7 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
               </button>
               <button
                 onClick={handleGenerate}
-                disabled={!falKey || !elevenLabsKey || !selectedActor || generating}
+                disabled={!selectedActor || generating}
                 className="btn-primary px-6 py-2 text-sm flex items-center gap-2 disabled:opacity-50"
               >
                 {generating ? (
@@ -1401,8 +1370,8 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
                       <Share2 size={14} /> Publish to Social Media
                     </h3>
 
-                    {!uploadPostKey ? (
-                      <p className="text-xs text-zinc-500">Set your Upload-Post API key in Settings to enable publishing.</p>
+                    {!uploadUserId ? (
+                      <p className="text-xs text-zinc-500">Select an Upload-Post profile in the header, or set upload_post_default_username on the server.</p>
                     ) : (
                       <>
                         {/* Platform checkboxes */}
@@ -1457,7 +1426,6 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
                             try {
                               const payload = {
                                 job_id: jobId,
-                                api_key: uploadPostKey,
                                 user_id: uploadUserId,
                                 platforms: selected,
                                 title: genResult.script?.title,

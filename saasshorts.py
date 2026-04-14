@@ -76,7 +76,7 @@ SEARCH AND INVESTIGATE:
 
 Return a comprehensive JSON research report:
 {{
-    "product_name": "...",
+    "product_name": "...",   
     "website_url": "{url}",
     "what_it_does": "Detailed description of the product based on web research",
     "target_market": "Who this product is for",
@@ -103,7 +103,7 @@ Be thorough. Use REAL data from your search results, not made-up information."""
         model=GEMINI_MODEL,
         contents=[prompt],
         config=types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())],
+            tools=[types.Tool(google_search=types.GoogleSearch())],             
         ),
     )
 
