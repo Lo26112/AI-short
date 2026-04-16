@@ -2,6 +2,18 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bookmark, CheckSquare, ChevronLeft, ChevronRight, FolderPlus, Loader2, Sparkles, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 
+function sanitizeWorkbenchProjectFolderName(name) {
+  const raw = (name || '').trim();
+  if (!raw) return null;
+  if (raw.includes('..') || raw.includes('/') || raw.includes('\\')) return null;
+  let safe = raw.replace(/[<>:"|?*\x00-\x1f]/g, '_');
+  safe = safe.replace(/\s+/g, ' ').trim();
+  if (safe.length > 120) safe = safe.slice(0, 120).trimEnd();
+  safe = safe.replace(/^[ .]+|[ .]+$/g, '');
+  if (!safe) return null;
+  return safe;
+}
+
 export default function TestTab() {
   const [project, setProject] = useState(null);
   // { slug, displayName, relativeDir, videosBaseUrl }
@@ -118,6 +130,17 @@ export default function TestTab() {
     const name = createName.trim();
     if (!name) {
       setCreateError('请输入项目名称');
+      return;
+    }
+    const folderName = sanitizeWorkbenchProjectFolderName(name);
+    if (!folderName) {
+      window.alert('项目名称不合法，请换一个名称重试。');
+      setCreateError('项目名称不合法，请换一个名称重试。');
+      return;
+    }
+    if (Array.isArray(projectList) && projectList.some((p) => (p?.slug || '').trim() === folderName)) {
+      window.alert('已存在该名称的项目，请换一个名称重试。');
+      setCreateError('已存在该名称的项目，请换一个名称重试。');
       return;
     }
     setCreateLoading(true);

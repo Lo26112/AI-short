@@ -108,9 +108,22 @@ app.mount("/workbench-assets", StaticFiles(directory=WORKBENCH_ASSETS_ROOT), nam
 import httpx
 
 
-def _slugify_project_name(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
-    return slug[:80] or f"project-{uuid.uuid4().hex[:8]}"
+def _sanitize_workbench_project_folder_name(name: str) -> str:
+    """将用户输入的项目名转为安全的文件夹名（禁止路径穿越与非法字符）。"""
+    raw = (name or "").strip()
+    if not raw:
+        raise ValueError("empty")
+    if ".." in raw or "/" in raw or "\\" in raw:
+        raise ValueError("invalid")
+    # Windows 非法文件名字符等
+    safe = re.sub(r'[<>:"|?*\x00-\x1f]', "_", raw)
+    safe = re.sub(r"\s+", " ", safe).strip()
+    if len(safe) > 120:
+        safe = safe[:120].rstrip()
+    safe = safe.strip(" .")
+    if not safe:
+        raise ValueError("empty")
+    return safe
 
 
 def _safe_relpath(path: str) -> str:
@@ -167,7 +180,7 @@ async def workbench_projects(limit: int = 100):
         rel_dir = os.path.relpath(abs_dir, ".")
         projects.append({
             "slug": entry,
-            "display_name": entry.replace("-", " ").strip() or entry,
+            "display_name": entry,
             "relative_dir": _safe_relpath(rel_dir),
             "videos_base_url": "/videos",
             "mtime": os.path.getmtime(abs_dir),
@@ -183,19 +196,27 @@ async def workbench_create_project(req: WorkbenchCreateProjectRequest):
     if not name:
         raise HTTPException(status_code=400, detail="Project name is required")
 
-    base_slug = _slugify_project_name(name)
-    slug = base_slug
-    suffix = 1
-    while os.path.exists(os.path.join(WORKBENCH_PROJECTS_ROOT, slug)):
-        slug = f"{base_slug}-{suffix}"
-        suffix += 1
+    try:
+        folder_name = _sanitize_workbench_project_folder_name(name)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project name")
 
-    project_dir = os.path.join(WORKBENCH_PROJECTS_ROOT, slug)
+    project_dir = os.path.normpath(os.path.join(WORKBENCH_PROJECTS_ROOT, folder_name))
+    root_norm = os.path.normpath(WORKBENCH_PROJECTS_ROOT)
+    if not project_dir.startswith(root_norm):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if os.path.exists(project_dir) and not os.path.isdir(project_dir):
+        raise HTTPException(status_code=409, detail="A file exists with this name")
+
+    if os.path.isdir(project_dir):
+        raise HTTPException(status_code=409, detail="Project already exists")
+
     os.makedirs(project_dir, exist_ok=False)
 
     rel_dir = os.path.relpath(project_dir, ".")
     return {
-        "slug": slug,
+        "slug": folder_name,
         "display_name": name,
         "relative_dir": _safe_relpath(rel_dir),
         "videos_base_url": "/videos",

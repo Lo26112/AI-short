@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     allowedHosts: [
-      '192.168.1.54',
+      '192.168.1.188',
       'kolforge.ai',
       'www.kolforge.ai'
     ],
