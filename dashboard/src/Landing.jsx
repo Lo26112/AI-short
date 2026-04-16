@@ -581,23 +581,8 @@ export default function Landing({ onLaunchApp }) {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-white/5 py-10 px-6">
-        <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <img src="/logo-kolforge.png" alt="KOLForge" className="w-6 h-6" />
-            <span className="text-sm text-zinc-400">KOLForge — Free Enterprise Clip Generator & AI UGC Video Creator</span>
-          </div>
-          <div className="flex items-center gap-6 text-sm text-zinc-500">
-            <a href="https://www.upload-post.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Documentation</a>
-            <a href="#features" className="hover:text-white transition-colors">Solutions</a>
-            <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
-          </div>
-        </div>
-        <div className="max-w-5xl mx-auto mt-6 pt-4 border-t border-white/5 text-center">
-          <span className="text-xs text-zinc-600">Made with ❤️ by <a href="https://www.upload-post.com" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-white transition-colors">Upload-Post</a></span>
-        </div>
-      </footer>
+     
+
     </div>
   );
 }

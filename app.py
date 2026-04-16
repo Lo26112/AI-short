@@ -4,6 +4,10 @@ import json
 import shutil
 import time
 import asyncio
+<<<<<<< HEAD
+=======
+import re
+>>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 from api_keys import (
@@ -27,6 +31,13 @@ UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+<<<<<<< HEAD
+=======
+WORKBENCH_PROJECTS_ROOT = os.environ.get("WORKBENCH_PROJECTS_ROOT", os.path.join(OUTPUT_DIR, "projects"))
+WORKBENCH_ASSETS_ROOT = os.environ.get("WORKBENCH_ASSETS_ROOT", os.path.join(OUTPUT_DIR, "workbench_assets"))
+os.makedirs(WORKBENCH_PROJECTS_ROOT, exist_ok=True)
+os.makedirs(WORKBENCH_ASSETS_ROOT, exist_ok=True)
+>>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
 
 # 配置
 # 未设置时使用默认值，性能较高的服务器可适当调大
@@ -98,9 +109,120 @@ app.add_middleware(
 
 # 挂载静态目录：视频文件
 app.mount("/videos", StaticFiles(directory=OUTPUT_DIR), name="videos")
+<<<<<<< HEAD
 
 import httpx
 
+=======
+app.mount("/workbench-assets", StaticFiles(directory=WORKBENCH_ASSETS_ROOT), name="workbench-assets")
+
+import httpx
+
+
+def _slugify_project_name(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    return slug[:80] or f"project-{uuid.uuid4().hex[:8]}"
+
+
+def _safe_relpath(path: str) -> str:
+    return path.replace("\\", "/")
+
+
+def _collect_workbench_assets(kind: str, limit: int):
+    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    video_exts = {".mp4", ".mov", ".webm", ".mkv"}
+
+    items = []
+    for root, _, files in os.walk(WORKBENCH_ASSETS_ROOT):
+        for filename in files:
+            ext = os.path.splitext(filename)[1].lower()
+            asset_type = None
+            if ext in image_exts:
+                asset_type = "image"
+            elif ext in video_exts:
+                asset_type = "video"
+            else:
+                continue
+
+            if kind != "all" and kind != asset_type:
+                continue
+
+            abs_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(abs_path, WORKBENCH_ASSETS_ROOT)
+            rel_url_path = _safe_relpath(rel_path)
+            items.append({
+                "type": asset_type,
+                "name": filename,
+                "relative_path": rel_url_path,
+                "url": f"/workbench-assets/{rel_url_path}",
+                "mtime": os.path.getmtime(abs_path),
+            })
+
+    items.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+    return items[:limit]
+
+
+class WorkbenchCreateProjectRequest(BaseModel):
+    name: str
+
+
+@app.get("/api/workbench/projects")
+async def workbench_projects(limit: int = 100):
+    safe_limit = max(1, min(limit, 500))
+    projects = []
+
+    for entry in os.listdir(WORKBENCH_PROJECTS_ROOT):
+        abs_dir = os.path.join(WORKBENCH_PROJECTS_ROOT, entry)
+        if not os.path.isdir(abs_dir):
+            continue
+        rel_dir = os.path.relpath(abs_dir, ".")
+        projects.append({
+            "slug": entry,
+            "display_name": entry.replace("-", " ").strip() or entry,
+            "relative_dir": _safe_relpath(rel_dir),
+            "videos_base_url": "/videos",
+            "mtime": os.path.getmtime(abs_dir),
+        })
+
+    projects.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+    return {"projects": projects[:safe_limit]}
+
+
+@app.post("/api/workbench/projects")
+async def workbench_create_project(req: WorkbenchCreateProjectRequest):
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name is required")
+
+    base_slug = _slugify_project_name(name)
+    slug = base_slug
+    suffix = 1
+    while os.path.exists(os.path.join(WORKBENCH_PROJECTS_ROOT, slug)):
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
+
+    project_dir = os.path.join(WORKBENCH_PROJECTS_ROOT, slug)
+    os.makedirs(project_dir, exist_ok=False)
+
+    rel_dir = os.path.relpath(project_dir, ".")
+    return {
+        "slug": slug,
+        "display_name": name,
+        "relative_dir": _safe_relpath(rel_dir),
+        "videos_base_url": "/videos",
+    }
+
+
+@app.get("/api/workbench/static-assets")
+async def workbench_static_assets(kind: str = "all", limit: int = 100):
+    allowed = {"all", "image", "video"}
+    if kind not in allowed:
+        raise HTTPException(status_code=400, detail=f"kind must be one of: {', '.join(sorted(allowed))}")
+    safe_limit = max(1, min(limit, 500))
+    assets = _collect_workbench_assets(kind, safe_limit)
+    return {"assets": assets}
+
+>>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
 @app.get("/api/social/user")
 async def get_social_user(
     x_upload_post_key: Optional[str] = Header(None, alias="X-Upload-Post-Key"),
