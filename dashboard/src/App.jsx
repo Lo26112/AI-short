@@ -1,10 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, Check, Globe, Sparkles, Youtube, Instagram } from 'lucide-react';
 import SaaShortsTab from './components/SaaShortsTab';
-<<<<<<< HEAD
-=======
 import TestTab from './components/TestTab';
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
 import { getApiUrl } from './config';
 
 // Simple TikTok icon (Lucide variant may differ by version)
@@ -94,10 +91,7 @@ function App() {
 
   const [uploadUserId, setUploadUserId] = useState(() => localStorage.getItem('uploadUserId') || '');
   const [userProfiles, setUserProfiles] = useState([]);
-<<<<<<< HEAD
-=======
   const [activeTab, setActiveTab] = useState('saasshorts');
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
 
   useEffect(() => {
     if (!uploadUserId) return;
@@ -145,21 +139,14 @@ function App() {
 
       <nav className="flex-1 px-4 py-4 space-y-2">
         <button
-<<<<<<< HEAD
-          onClick={() => {}}
-          className="w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors bg-violet-500/10 text-violet-400"
-=======
           onClick={() => setActiveTab('saasshorts')}
           className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${
             activeTab === 'saasshorts' ? 'bg-violet-500/10 text-violet-400' : 'text-zinc-400 hover:bg-white/5'
           }`}
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
         >
           <Sparkles size={20} />
           <span className="font-medium hidden lg:block">AI Shorts</span>
         </button>
-<<<<<<< HEAD
-=======
 
         <button
           onClick={() => setActiveTab('test')}
@@ -170,7 +157,6 @@ function App() {
           <Sparkles size={20} />
           <span className="font-medium hidden lg:block">Workbench</span>
         </button>
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
       </nav>
 
       <div className="p-4 border-t border-white/5 space-y-2">
@@ -205,11 +191,7 @@ function App() {
           <div className="flex items-center gap-4" />
 
           <div className="flex items-center gap-4">
-<<<<<<< HEAD
-            {userProfiles.length > 0 && (
-=======
             {activeTab === 'saasshorts' && userProfiles.length > 0 && (
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
               <UserProfileSelector
                 profiles={userProfiles}
                 selectedUserId={uploadUserId}
@@ -220,8 +202,11 @@ function App() {
         </header>
 
         <div className="flex-1 overflow-hidden relative">
-<<<<<<< HEAD
-          <SaaShortsTab uploadUserId={uploadUserId} />
+          {activeTab === 'saasshorts' ? (
+            <SaaShortsTab uploadUserId={uploadUserId} />
+          ) : (
+            <TestTab />
+          )}
         </div>
 
         <div className="h-8 border-t border-white/5 flex items-center justify-center shrink-0">
@@ -232,16 +217,6 @@ function App() {
             </a>
           </span>
         </div>
-=======
-          {activeTab === 'saasshorts' ? (
-            <SaaShortsTab uploadUserId={uploadUserId} />
-          ) : (
-            <TestTab />
-          )}
-        </div>
-
-        
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
       </main>
     </div>
   );

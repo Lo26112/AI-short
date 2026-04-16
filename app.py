@@ -4,10 +4,7 @@ import json
 import shutil
 import time
 import asyncio
-<<<<<<< HEAD
-=======
 import re
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 from api_keys import (
@@ -31,13 +28,10 @@ UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-<<<<<<< HEAD
-=======
 WORKBENCH_PROJECTS_ROOT = os.environ.get("WORKBENCH_PROJECTS_ROOT", os.path.join(OUTPUT_DIR, "projects"))
 WORKBENCH_ASSETS_ROOT = os.environ.get("WORKBENCH_ASSETS_ROOT", os.path.join(OUTPUT_DIR, "workbench_assets"))
 os.makedirs(WORKBENCH_PROJECTS_ROOT, exist_ok=True)
 os.makedirs(WORKBENCH_ASSETS_ROOT, exist_ok=True)
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
 
 # 配置
 # 未设置时使用默认值，性能较高的服务器可适当调大
@@ -109,11 +103,6 @@ app.add_middleware(
 
 # 挂载静态目录：视频文件
 app.mount("/videos", StaticFiles(directory=OUTPUT_DIR), name="videos")
-<<<<<<< HEAD
-
-import httpx
-
-=======
 app.mount("/workbench-assets", StaticFiles(directory=WORKBENCH_ASSETS_ROOT), name="workbench-assets")
 
 import httpx
@@ -221,8 +210,6 @@ async def workbench_static_assets(kind: str = "all", limit: int = 100):
     safe_limit = max(1, min(limit, 500))
     assets = _collect_workbench_assets(kind, safe_limit)
     return {"assets": assets}
-
->>>>>>> 0dbb9cc (接入 TestTab 并新增 workbench 相关后端接口与静态资源代理)
 @app.get("/api/social/user")
 async def get_social_user(
     x_upload_post_key: Optional[str] = Header(None, alias="X-Upload-Post-Key"),
