@@ -2,6 +2,8 @@ services:
   backend:
     build: .
     container_name: kolforge-backend
+    environment:
+      - WORKBENCH_ASSETS_ROOT=output/static-assets
     ports:
       - "8000:8000"
     volumes:

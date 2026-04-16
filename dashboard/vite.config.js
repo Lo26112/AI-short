@@ -15,7 +15,11 @@ export default defineConfig({
         target: 'http://backend:8000',
         changeOrigin: true,
       },
-      '/videos': {
+      '/static-assets': {
+        target: 'http://backend:8000',
+        changeOrigin: true,
+      },
+      '/workbench-assets': {
         target: 'http://backend:8000',
         changeOrigin: true,
       },
@@ -27,7 +31,7 @@ export default defineConfig({
         target: 'http://backend:8000',
         changeOrigin: true,
       },
-      '/video': {
+      '/videos': {
         target: 'http://backend:8000',
         changeOrigin: true,
       }
