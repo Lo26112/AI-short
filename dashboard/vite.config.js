@@ -30,10 +30,6 @@ export default defineConfig({
       '/gallery': {
         target: 'http://backend:8000',
         changeOrigin: true,
-      },
-      '/videos': {
-        target: 'http://backend:8000',
-        changeOrigin: true,
       }
     }
   }
