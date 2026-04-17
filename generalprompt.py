@@ -75,6 +75,7 @@ class GeneralPromptRequest(BaseModel):
     video_asset: Optional[str] = None
     audio_asset: Optional[str] = None
     context_image_urls: list[str] = Field(default_factory=list)
+    prompt_element_urls: list[str] = Field(default_factory=list)
     nano_banana_2: Optional[NanoBanana2UserInput] = None
 
 
@@ -171,7 +172,6 @@ async def _call_seed_v3(
     fal_key: str,
     step_idx: int,
     raw_prompt: str,
-    image_urls: list[str],
 ) -> str:
     request_body = {
         "prompt": raw_prompt,
@@ -182,8 +182,6 @@ async def _call_seed_v3(
         "temperature": 0.7,
         "top_p": 0.7,
     }
-    if image_urls:
-        request_body["image_urls"] = image_urls
 
     resp = await client.post(
         SEED_V3_URL,
@@ -228,15 +226,18 @@ async def generate_general_prompt(
     print("received:", req.model_dump())
     if req.context_image_urls:
         print("context_image_urls:", req.context_image_urls)
+    if req.prompt_element_urls:
+        print("prompt_element_urls:", req.prompt_element_urls)
 
     # Step 0 生成图片:
     # - if user provided images: use fal-ai/nano-banana-2/edit (image-to-image)
     # - else: use fal-ai/nano-banana-2 (text-to-image)
     if req.step == 0:
-        image_urls = (req.context_image_urls or [])[:6]
+        ordered_element_urls = [u for u in (req.prompt_element_urls or []) if isinstance(u, str) and u.strip()]
+        image_urls = (ordered_element_urls or req.context_image_urls or [])[:6]
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
-                seed_prompt = await _call_seed_v3(client, fal_key, 0, raw_prompt, image_urls)
+                seed_prompt = await _call_seed_v3(client, fal_key, 0, raw_prompt)
                 print("seed_output (nano prompt):", seed_prompt)
 
                 use_edit = len(image_urls) > 0
@@ -293,10 +294,9 @@ async def generate_general_prompt(
         )
 
     # Step 1 生成视频: Seed v3 prompt rewrite only
-    image_urls = (req.context_image_urls or [])[:6]
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
-            generated_prompt = await _call_seed_v3(client, fal_key, 1, raw_prompt, image_urls)
+            generated_prompt = await _call_seed_v3(client, fal_key, 1, raw_prompt)
     except HTTPException:
         raise
     except Exception as e:

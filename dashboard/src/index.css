@@ -17,6 +17,17 @@
   @apply w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all text-sm placeholder:text-zinc-500;
 }
 
+/* Keep native select dropdown options readable on dark theme */
+.input-field option {
+  background: #18181b;
+  color: #e4e4e7;
+}
+
+.input-field option:checked {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
 .btn-primary {
   @apply bg-primary hover:bg-blue-600 text-white px-6 py-3 rounded-xl font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/20;
 }

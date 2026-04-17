@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Bookmark, CheckSquare, ChevronLeft, ChevronRight, FolderPlus, Loader2, Sparkles, X } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Bookmark, CheckSquare, ChevronLeft, ChevronRight, FolderPlus, Loader2, Sparkles, Trash2, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 function sanitizeWorkbenchProjectFolderName(name) {
@@ -27,6 +27,15 @@ const NANO_BANANA2_DEFAULTS = {
   thinking_level: '',
 };
 
+const ELEMENT_BADGE_COLORS = [
+  { bg: 'rgba(139, 92, 246, 0.24)', border: 'rgba(139, 92, 246, 0.6)', text: '#ddd6fe' }, // violet
+  { bg: 'rgba(217, 70, 239, 0.2)', border: 'rgba(217, 70, 239, 0.55)', text: '#f5d0fe' }, // fuchsia
+  { bg: 'rgba(59, 130, 246, 0.22)', border: 'rgba(59, 130, 246, 0.55)', text: '#bfdbfe' }, // blue
+  { bg: 'rgba(16, 185, 129, 0.2)', border: 'rgba(16, 185, 129, 0.55)', text: '#a7f3d0' }, // emerald
+  { bg: 'rgba(245, 158, 11, 0.2)', border: 'rgba(245, 158, 11, 0.55)', text: '#fde68a' }, // amber
+  { bg: 'rgba(244, 63, 94, 0.2)', border: 'rgba(244, 63, 94, 0.55)', text: '#fecdd3' }, // rose
+];
+
 export default function TestTab() {
   const [project, setProject] = useState(null);
   // { slug, displayName, relativeDir, videosBaseUrl }
@@ -38,6 +47,7 @@ export default function TestTab() {
   const [projectList, setProjectList] = useState([]);
   const [projectListLoading, setProjectListLoading] = useState(false);
   const [projectListError, setProjectListError] = useState('');
+  const [deletingProjectSlug, setDeletingProjectSlug] = useState(null);
 
   // Workbench wizard state
   const [step, setStep] = useState(0);
@@ -63,11 +73,15 @@ export default function TestTab() {
   const [assetPickerError, setAssetPickerError] = useState('');
   const [assetPickerItems, setAssetPickerItems] = useState([]);
   const [assetPickerDraft, setAssetPickerDraft] = useState({ images: [], video: null });
+  const [isMentionPicker, setIsMentionPicker] = useState(false);
+  const [mentionInsertPos, setMentionInsertPos] = useState(null);
   const [previewAsset, setPreviewAsset] = useState(null);
+  const promptEditorRef = useRef(null);
 
   /** fal-ai/nano-banana-2 (step 0) — user-facing fields; server merges the rest. */
   const [nanoBanana2, setNanoBanana2] = useState({ ...NANO_BANANA2_DEFAULTS });
   const [step0GeneratedImageUrls, setStep0GeneratedImageUrls] = useState([]);
+  const [promptElements, setPromptElements] = useState([]);
   const fetchProjectList = useCallback(async () => {
     setProjectListLoading(true);
     setProjectListError('');
@@ -114,11 +128,44 @@ export default function TestTab() {
     });
     setNanoBanana2({ ...NANO_BANANA2_DEFAULTS });
     setStep0GeneratedImageUrls([]);
+    setPromptElements([]);
   };
 
   const leaveProject = () => {
     setProject(null);
     resetWizardState();
+  };
+
+  const deleteProject = async (item) => {
+    if (!item?.slug) return;
+    const confirmed = window.confirm(`确定删除项目「${item.display_name || item.slug}」吗？此操作不可恢复。`);
+    if (!confirmed) return;
+
+    setDeletingProjectSlug(item.slug);
+    try {
+      const res = await fetch(getApiUrl(`/api/workbench/projects/${encodeURIComponent(item.slug)}`), {
+        method: 'DELETE',
+      });
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        /* ignore */
+      }
+      if (!res.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : '删除项目失败';
+        throw new Error(detail);
+      }
+
+      if (project?.slug === item.slug) {
+        leaveProject();
+      }
+      await fetchProjectList();
+    } catch (err) {
+      window.alert(err.message || '删除项目失败');
+    } finally {
+      setDeletingProjectSlug(null);
+    }
   };
 
   const openCreateModal = () => {
@@ -201,9 +248,34 @@ export default function TestTab() {
     }
   };
 
+  const openMentionAssetPicker = async (insertPos) => {
+    setIsMentionPicker(true);
+    setMentionInsertPos(insertPos);
+    setAssetPickerTab('image');
+    setShowAssetPicker(true);
+    setAssetPickerLoading(true);
+    setAssetPickerError('');
+    setAssetPickerItems([]);
+    try {
+      const res = await fetch(getApiUrl('/api/workbench/static-assets?kind=image&limit=300'));
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : '加载图片素材失败';
+        throw new Error(detail);
+      }
+      setAssetPickerItems(data.assets || []);
+    } catch (err) {
+      setAssetPickerError(err.message || '加载图片素材失败');
+    } finally {
+      setAssetPickerLoading(false);
+    }
+  };
+
   const closeAssetPicker = () => {
     setShowAssetPicker(false);
     setAssetPickerError('');
+    setIsMentionPicker(false);
+    setMentionInsertPos(null);
   };
 
   const syncContextSelectionToBackend = async (targetStep, urls) => {
@@ -238,6 +310,108 @@ export default function TestTab() {
 
   const closePreviewAsset = () => {
     setPreviewAsset(null);
+  };
+
+  const serializePromptFromEditor = (root) => {
+    if (!root) return '';
+    const walk = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || '';
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      const token = node.getAttribute('data-token');
+      if (token) return token;
+      let out = '';
+      node.childNodes.forEach((child) => {
+        out += walk(child);
+      });
+      return out;
+    };
+    return walk(root);
+  };
+
+  const getCaretTextOffset = (root) => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return (prompt || '').length;
+    const range = sel.getRangeAt(0);
+    if (!root.contains(range.endContainer)) return (prompt || '').length;
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(root);
+    preRange.setEnd(range.endContainer, range.endOffset);
+    return preRange.toString().length;
+  };
+
+  const escapeHtml = (text) => String(text || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+
+  const buildPromptEditorHTML = (text) => {
+    const tokenRegex = /Elements\[(\d+)\]/g;
+    let html = '';
+    let lastIndex = 0;
+    let match = tokenRegex.exec(text);
+    while (match) {
+      const full = match[0];
+      const idx = Number(match[1]);
+      const element = promptElements[idx];
+      html += escapeHtml(text.slice(lastIndex, match.index));
+      if (element?.url) {
+        const color = element.color || ELEMENT_BADGE_COLORS[idx % ELEMENT_BADGE_COLORS.length];
+        html += `<span contenteditable="false" data-token="${full}" class="inline-flex items-center gap-1 mx-0.5 px-1 py-0.5 rounded bg-white/10 border border-white/15 align-middle">
+  <img src="${escapeHtml(getApiUrl(element.url))}" alt="${escapeHtml(element.name || full)}" class="w-8 h-8 rounded object-cover" />
+  <span style="background:${color.bg};border:1px solid ${color.border};color:${color.text}" class="text-[10px] px-1 py-0.5 rounded">${escapeHtml(full)}</span>
+</span>`;
+      } else {
+        html += `<span contenteditable="false" data-token="${full}" class="inline-flex items-center mx-0.5 px-1 py-0.5 rounded bg-white/10 border border-white/15 text-[10px] text-zinc-300">${escapeHtml(full)}</span>`;
+      }
+      lastIndex = match.index + full.length;
+      match = tokenRegex.exec(text);
+    }
+    html += escapeHtml(text.slice(lastIndex));
+    return html.replaceAll('\n', '<br>');
+  };
+
+  useEffect(() => {
+    const editor = promptEditorRef.current;
+    if (!editor) return;
+    const current = serializePromptFromEditor(editor);
+    if (current === (prompt || '')) return;
+    editor.innerHTML = buildPromptEditorHTML(prompt || '');
+  }, [prompt, promptElements]);
+
+  const removePromptElement = async (removeIndex) => {
+    setPrompt((prev) => {
+      let next = prev.replaceAll(`Elements[${removeIndex}]`, '');
+      for (let i = removeIndex + 1; i <= promptElements.length - 1; i += 1) {
+        next = next.replaceAll(`Elements[${i}]`, `Elements[${i - 1}]`);
+      }
+      return next;
+    });
+    const nextElements = promptElements
+      .filter((item) => item.index !== removeIndex)
+      .map((item, idx) => ({ ...item, index: idx }));
+    setPromptElements(nextElements);
+    await syncContextSelectionToBackend(step, nextElements.map((item) => item.url));
+  };
+
+  const handleMentionAssetSelect = async (asset) => {
+    const insertPos = mentionInsertPos ?? prompt.length;
+    const nextIndex = promptElements.length;
+    const token = `Elements[${nextIndex}]`;
+    setPrompt((prev) => `${prev.slice(0, insertPos)}${token}${prev.slice(insertPos)}`);
+    const nextElements = [
+      ...promptElements,
+      {
+        index: nextIndex,
+        name: asset.name,
+        relative_path: asset.relative_path,
+        url: asset.url,
+        color: ELEMENT_BADGE_COLORS[Math.floor(Math.random() * ELEMENT_BADGE_COLORS.length)],
+      },
+    ];
+    setPromptElements(nextElements);
+    await syncContextSelectionToBackend(step, nextElements.map((item) => item.url));
+    closeAssetPicker();
   };
 
   const toggleDraftAsset = (asset) => {
@@ -322,7 +496,8 @@ export default function TestTab() {
         image_asset: imageAsset,
         video_asset: videoAsset,
         audio_asset: audioAsset,
-        context_image_urls: (selectedStaticAssets[step]?.images || []).map((asset) => asset.url).filter(Boolean),
+        context_image_urls: promptElements.map((item) => item.url).filter(Boolean),
+        prompt_element_urls: promptElements.map((item) => item.url).filter(Boolean),
       };
 
       if (step === 0) {
@@ -391,99 +566,46 @@ export default function TestTab() {
     }
   };
 
-  const renderAssetSelector = (targetStep) => {
-    const picked = selectedStaticAssets[targetStep] || { images: [], video: null };
-    return (
-      <div className="mb-2">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <label className="block text-sm font-medium text-zinc-300">User prompt</label>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => openAssetPicker(targetStep)}
-              className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10 text-xs flex items-center gap-1"
-              title="选择素材"
-            >
-              <CheckSquare size={13} />
-              选择素材
-            </button>
-          </div>
-        </div>
-        {(picked.images?.length > 0 || picked.video) && (
-          <div className="mb-2 text-[11px] text-zinc-500 space-y-2">
-            {picked.images?.length > 0 && (
-              <div>
-                <div className="mb-1">图片素材：</div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {picked.images.map((asset) => (
-                    <button
-                      key={asset.relative_path}
-                      type="button"
-                      onClick={() => openPreviewAsset(asset)}
-                      className="relative group w-12 h-12 rounded-md overflow-hidden border border-white/10 bg-black/30 hover:border-violet-400/50 transition-colors"
-                      title={`点击预览：${asset.name}`}
-                    >
-                      <img src={getApiUrl(asset.url)} alt={asset.name} className="w-full h-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          removeSelectedImage(targetStep, asset.relative_path);
-                        }}
-                        className="absolute top-0.5 right-0.5 z-10 p-0.5 rounded-full bg-black/60 border border-white/10 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
-                        title="删除该图片"
-                      >
-                        <X size={12} />
-                      </button>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {picked.video && <div>视频素材：<span className="text-zinc-300">{picked.video.name}</span></div>}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const handlePromptKeyDown = (event) => {
+    if (event.key === '@' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      const pos = getCaretTextOffset(promptEditorRef.current);
+      openMentionAssetPicker(pos);
+      return;
+    }
+
     if (event.key !== 'Enter' || event.isComposing) return;
 
     // Ctrl+Enter: force newline at caret position
     if (event.ctrlKey) {
       event.preventDefault();
-      const textarea = event.currentTarget;
-      const start = textarea.selectionStart ?? prompt.length;
-      const end = textarea.selectionEnd ?? prompt.length;
-      const next = `${prompt.slice(0, start)}\n${prompt.slice(end)}`;
-      setPrompt(next);
-
-      // keep caret after inserted newline
-      requestAnimationFrame(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + 1;
-      });
+      document.execCommand('insertLineBreak');
+      const editor = promptEditorRef.current;
+      setPrompt(serializePromptFromEditor(editor));
       return;
     }
 
     event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
+    const form = event.currentTarget.closest('form');
+    form?.requestSubmit();
   };
 
   const renderBottomComposer = (targetStep, placeholder, buttonText, requirePrompt = true, showPromptTextarea = true) => (
     <div className="border border-white/10 bg-[#141418]/90 backdrop-blur-md rounded-xl p-3">
-      {renderAssetSelector(targetStep)}
       <div className="flex flex-col gap-2">
+        <div className="text-[11px] text-zinc-500">
+          提示：输入 <span className="font-mono text-zinc-400">@</span> 可引用素材库图片（会插入 <span className="font-mono text-zinc-400">图片素材</span>）。
+        </div>
         {showPromptTextarea ? (
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={handlePromptKeyDown}
-          rows={2}
-          className="input-field resize-none text-sm"
-          placeholder={placeholder}
-        />
+          <div
+            ref={promptEditorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={() => setPrompt(serializePromptFromEditor(promptEditorRef.current))}
+            onKeyDown={handlePromptKeyDown}
+            data-placeholder={placeholder}
+            className="input-field min-h-[72px] max-h-[180px] overflow-y-auto text-sm whitespace-pre-wrap break-words"
+          />
         ) : null}
         <button
           type="submit"
@@ -517,18 +639,9 @@ export default function TestTab() {
 
   const renderNanoBanana2ParameterPanel = () => (
     <div className="space-y-4">
-      <div>
-        <h3 className="text-sm font-semibold text-white">Nano Banana 2 参数</h3>
-        <p className="text-[11px] text-zinc-500 mt-1">
-          对应模型 <span className="font-mono text-zinc-400">fal-ai/nano-banana-2</span>。
-          在底部填写需求后，服务端会先用 Seed 优化提示词，再将优化结果作为 Nano 的
-          <span className="font-mono text-zinc-400"> prompt </span>
-          发起请求。
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
+      <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="w-[140px]">
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">num_images</label>
           <select
             value={nanoBanana2.num_images}
@@ -540,7 +653,7 @@ export default function TestTab() {
             ))}
           </select>
         </div>
-        <div>
+        <div className="min-w-[180px] flex-1">
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">aspect_ratio</label>
           <select
             value={nanoBanana2.aspect_ratio}
@@ -552,7 +665,7 @@ export default function TestTab() {
             ))}
           </select>
         </div>
-        <div>
+        <div className="w-[160px]">
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">output_format</label>
           <select
             value={nanoBanana2.output_format}
@@ -564,7 +677,7 @@ export default function TestTab() {
             <option value="webp">webp</option>
           </select>
         </div>
-        <div>
+        <div className="w-[140px]">
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">resolution</label>
           <select
             value={nanoBanana2.resolution}
@@ -579,8 +692,8 @@ export default function TestTab() {
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-300">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-300 select-none">
           <input
             type="checkbox"
             checked={nanoBanana2.enable_web_search}
@@ -589,18 +702,19 @@ export default function TestTab() {
           />
           enable_web_search
         </label>
-        <div className="flex-1 sm:max-w-xs">
+        <div className="w-[220px]">
           <label className="block text-xs font-medium text-zinc-400 mb-1.5">thinking_level</label>
           <select
             value={nanoBanana2.thinking_level}
             onChange={(e) => setNanoBanana2((p) => ({ ...p, thinking_level: e.target.value }))}
             className="input-field text-sm w-full"
           >
-            <option value="">关闭（不传该字段）</option>
+            <option value="">null</option>
             <option value="minimal">minimal</option>
             <option value="high">high</option>
           </select>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -680,31 +794,48 @@ export default function TestTab() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {projectList.map((item) => (
-                  <button
+                  <div
                     key={item.slug}
-                    type="button"
-                    onClick={() => {
-                      setProject({
-                        slug: item.slug,
-                        displayName: item.display_name || item.slug,
-                        relativeDir: item.relative_dir,
-                        videosBaseUrl: item.videos_base_url,
-                      });
-                      resetWizardState();
-                    }}
-                    className="text-left rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
+                    className="rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProject({
+                            slug: item.slug,
+                            displayName: item.display_name || item.slug,
+                            relativeDir: item.relative_dir,
+                            videosBaseUrl: item.videos_base_url,
+                          });
+                          resetWizardState();
+                        }}
+                        className="min-w-0 text-left flex-1"
+                      >
                         <div className="text-sm font-semibold text-zinc-200 truncate">{item.display_name || item.slug}</div>
                         <div className="text-[11px] text-zinc-500 font-mono truncate mt-1">{item.relative_dir}</div>
+                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          disabled={deletingProjectSlug === item.slug}
+                          onClick={() => deleteProject(item)}
+                          className="p-1.5 rounded-lg text-zinc-500 hover:text-red-300 hover:bg-red-500/15 disabled:opacity-50"
+                          title="删除项目"
+                        >
+                          {deletingProjectSlug === item.slug ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={14} />
+                          )}
+                        </button>
+                        <ChevronRight size={15} className="text-zinc-600 mt-0.5" />
                       </div>
-                      <ChevronRight size={15} className="text-zinc-600 shrink-0 mt-0.5" />
                     </div>
                     <div className="text-[11px] text-zinc-600 mt-2">
                       更新时间：{item.mtime ? new Date(item.mtime * 1000).toLocaleString() : '-'}
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -857,7 +988,7 @@ export default function TestTab() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-white">生成图片</h2>
-                  <p className="text-xs text-zinc-500 mt-1">输入提示词，生成图片素材（占位）。</p>
+                  <p className="text-xs text-zinc-500 mt-1">输入提示词，配置生图参数。</p>
                 </div>
                 <button
                   type="button"
@@ -982,7 +1113,7 @@ export default function TestTab() {
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <h3 className="text-base font-bold text-white">
-                    选择素材
+                    {isMentionPicker ? '选择图片素材（插入 Elements）' : '选择素材'}
                   </h3>
                   <p className="text-xs text-zinc-500 mt-1">
                     本地静态资源目录：通过服务端配置的 WORKBENCH_ASSETS_ROOT
@@ -993,6 +1124,7 @@ export default function TestTab() {
                 </button>
               </div>
 
+              {!isMentionPicker && (
               <div className="mb-3 flex items-center gap-2">
                 {['all', 'image', 'video'].map((kind) => (
                   <button
@@ -1014,6 +1146,7 @@ export default function TestTab() {
                   {assetPickerDraft.video ? <span className="text-zinc-300 ml-1">视频</span> : null}
                 </div>
               </div>
+              )}
 
               {assetPickerLoading ? (
                 <div className="flex-1 flex items-center justify-center text-zinc-400">
@@ -1024,14 +1157,14 @@ export default function TestTab() {
                 <div className="flex-1 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">{assetPickerError}</div>
               ) : (
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
-                  {assetPickerItems.filter((a) => assetPickerTab === 'all' || a.type === assetPickerTab).length === 0 ? (
+                  {assetPickerItems.filter((a) => isMentionPicker ? a.type === 'image' : (assetPickerTab === 'all' || a.type === assetPickerTab)).length === 0 ? (
                     <div className="text-sm text-zinc-500 border border-white/10 bg-white/5 rounded-xl p-4">
-                      未找到可用{assetPickerTab === 'all' ? '素材' : assetPickerTab === 'image' ? '图片' : '视频'}，请先将文件放到静态素材目录或 GitHub 仓库。
+                      未找到可用{isMentionPicker ? '图片' : (assetPickerTab === 'all' ? '素材' : assetPickerTab === 'image' ? '图片' : '视频')}，请先将文件放到静态素材目录或 GitHub 仓库。
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                       {assetPickerItems
-                        .filter((asset) => assetPickerTab === 'all' || asset.type === assetPickerTab)
+                        .filter((asset) => isMentionPicker ? asset.type === 'image' : (assetPickerTab === 'all' || asset.type === assetPickerTab))
                         .map((asset) => {
                           const checked = asset.type === 'image'
                             ? (assetPickerDraft.images || []).some((item) => item.relative_path === asset.relative_path)
@@ -1040,7 +1173,7 @@ export default function TestTab() {
                         <button
                           key={asset.relative_path}
                           type="button"
-                          onClick={() => toggleDraftAsset(asset)}
+                          onClick={() => (isMentionPicker ? handleMentionAssetSelect(asset) : toggleDraftAsset(asset))}
                           className={`text-left rounded-xl border transition-colors overflow-hidden ${
                             checked
                               ? 'border-violet-500/40 bg-violet-500/10'
@@ -1071,6 +1204,7 @@ export default function TestTab() {
                 </div>
               )}
 
+              {!isMentionPicker && (
               <div className="mt-3 flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -1087,6 +1221,7 @@ export default function TestTab() {
                   确定
                 </button>
               </div>
+              )}
             </div>
           </div>
         )}

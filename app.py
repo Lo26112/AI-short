@@ -60,8 +60,16 @@ async def cleanup_jobs():
             now = time.time()
             
             # 基于修改时间做目录清理（OUTPUT_DIR）
+            # 排除持久化目录：项目与静态素材
+            protected_dirs = {
+                os.path.normpath(WORKBENCH_PROJECTS_ROOT),
+                os.path.normpath(WORKBENCH_ASSETS_ROOT),
+            }
             for job_id in os.listdir(OUTPUT_DIR):
                 job_path = os.path.join(OUTPUT_DIR, job_id)
+                job_path_norm = os.path.normpath(job_path)
+                if job_path_norm in protected_dirs:
+                    continue
                 if os.path.isdir(job_path) and now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
                     print(f"🧹 Purging old output dir: {job_id}")
                     shutil.rmtree(job_path, ignore_errors=True)
@@ -314,6 +322,35 @@ async def workbench_create_project(req: WorkbenchCreateProjectRequest):
         "relative_dir": _safe_relpath(rel_dir),
         "videos_base_url": "/videos",
     }
+
+
+@app.delete("/api/workbench/projects/{slug}")
+async def workbench_delete_project(slug: str):
+    raw_slug = (slug or "").strip()
+    if not raw_slug:
+        raise HTTPException(status_code=400, detail="Project slug is required")
+
+    try:
+        folder_name = _sanitize_workbench_project_folder_name(raw_slug)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project slug")
+
+    project_dir = os.path.normpath(os.path.join(WORKBENCH_PROJECTS_ROOT, folder_name))
+    root_norm = os.path.normpath(WORKBENCH_PROJECTS_ROOT)
+    if not project_dir.startswith(root_norm):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not os.path.exists(project_dir):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not os.path.isdir(project_dir):
+        raise HTTPException(status_code=409, detail="Target is not a project directory")
+
+    try:
+        shutil.rmtree(project_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete project: {e}")
+
+    return {"ok": True, "deleted_slug": folder_name}
 
 
 @app.get("/api/workbench/static-assets")
