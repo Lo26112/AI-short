@@ -2,18 +2,25 @@ import os
 import shutil
 import asyncio
 import re
-from contextlib import asynccontextmanager
-
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from typing import Optional
+from api_keys import (
+    resolve_upload_post_key,
+    get_upload_post_default_username,
+)
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from workbench_video import router as workbench_video_router
 
 load_dotenv()
 
 # 常量
+UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 WORKBENCH_PROJECTS_ROOT = os.environ.get("WORKBENCH_PROJECTS_ROOT", os.path.join(OUTPUT_DIR, "projects"))
 WORKBENCH_ASSETS_ROOT = os.environ.get("WORKBENCH_ASSETS_ROOT", os.path.join(OUTPUT_DIR, "workbench_assets"))
@@ -24,29 +31,41 @@ os.makedirs(WORKBENCH_ASSETS_ROOT, exist_ok=True)
 JOB_RETENTION_SECONDS = 3600  # 任务保留时长：1 小时
 
 async def cleanup_jobs():
-    """后台清理任务：定期删除过期输出目录。"""
+    """后台清理任务：定期删除过期任务与文件。"""
+    import time
     print("🧹 Cleanup task started.")
     while True:
         try:
-            await asyncio.sleep(300)  # 每 5 分钟检查一次
-            import time
+            await asyncio.sleep(300) # 每 5 分钟检查一次
             now = time.time()
-
+            
             # 基于修改时间做目录清理（OUTPUT_DIR）
-            for entry in os.listdir(OUTPUT_DIR):
-                path = os.path.join(OUTPUT_DIR, entry)
-                if os.path.isdir(path) and now - os.path.getmtime(path) > JOB_RETENTION_SECONDS:
-                    print(f"🧹 Purging old output dir: {entry}")
-                    shutil.rmtree(path, ignore_errors=True)
+            for job_id in os.listdir(OUTPUT_DIR):
+                job_path = os.path.join(OUTPUT_DIR, job_id)
+                if os.path.isdir(job_path) and now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
+                    print(f"🧹 Purging old output dir: {job_id}")
+                    shutil.rmtree(job_path, ignore_errors=True)
+
+            # 清理上传目录
+            for filename in os.listdir(UPLOAD_DIR):
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                try:
+                    if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
+                         os.remove(file_path)
+                except Exception: pass
+
         except Exception as e:
             print(f"⚠️ Cleanup error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    asyncio.create_task(cleanup_jobs())
+    # 启动清理协程
+    cleanup_task = asyncio.create_task(cleanup_jobs())
     yield
+    # 关闭阶段（如有需要可在此取消后台协程）
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(workbench_video_router)
 
 # 为前端启用 CORS
 app.add_middleware(
@@ -58,7 +77,10 @@ app.add_middleware(
 )
 
 # 挂载静态目录：视频文件
+app.mount("/videos", StaticFiles(directory=OUTPUT_DIR), name="videos")
 app.mount("/workbench-assets", StaticFiles(directory=WORKBENCH_ASSETS_ROOT), name="workbench-assets")
+
+import httpx
 
 
 def _sanitize_workbench_project_folder_name(name: str) -> str:
@@ -184,3 +206,65 @@ async def workbench_static_assets(kind: str = "all", limit: int = 100):
     safe_limit = max(1, min(limit, 500))
     assets = _collect_workbench_assets(kind, safe_limit)
     return {"assets": assets}
+
+
+@app.get("/api/social/user")
+async def get_social_user(
+    x_upload_post_key: Optional[str] = Header(None, alias="X-Upload-Post-Key"),
+):
+    """代理 Upload-Post 用户信息接口，返回可用账号（密钥来自服务端配置，可选请求头覆盖用于调试）。"""
+    api_key = resolve_upload_post_key(x_upload_post_key)
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing API key: upload_post_api_key (set UPLOAD_POST_API_KEY in .env, or X-Upload-Post-Key for debug)",
+        )
+
+    url = "https://api.upload-post.com/api/uploadposts/users"
+    print(f"🔍 Fetching User ID from: {url}")
+    headers = {"Authorization": f"Apikey {api_key}"}
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                print(f"❌ Upload-Post User Fetch Error: {resp.text}")
+                raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch user: {resp.text}")
+            
+            data = resp.json()
+            print(f"🔍 Upload-Post User Response: {data}")
+            
+            user_id = None
+            # 返回结构通常为 {'success': True, 'profiles': [{'username': '...'}, ...]}
+            profiles_list = []
+            if isinstance(data, dict):
+                 raw_profiles = data.get('profiles', [])
+                 if isinstance(raw_profiles, list):
+                     for p in raw_profiles:
+                         username = p.get('username')
+                         if username:
+                             # 提取已连接的平台
+                             socials = p.get('social_accounts', {})
+                             connected = []
+                             # 检查常见平台
+                             for platform in ['tiktok', 'instagram', 'youtube']:
+                                 account_info = socials.get(platform)
+                                 # 若为有效对象则视为已连接
+                                 if isinstance(account_info, dict):
+                                     connected.append(platform)
+                             
+                             profiles_list.append({
+                                 "username": username,
+                                 "connected": connected
+                             })
+            
+            default_username = get_upload_post_default_username()
+            if not profiles_list:
+                return {"profiles": [], "error": "No profiles found", "default_username": default_username}
+
+            return {"profiles": profiles_list, "default_username": default_username}
+            
+            
+        except Exception as e:
+             raise HTTPException(status_code=500, detail=str(e))
+

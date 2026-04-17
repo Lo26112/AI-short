@@ -14,6 +14,14 @@ function sanitizeWorkbenchProjectFolderName(name) {
   return safe;
 }
 
+async function parseJsonSafe(res) {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
 export default function TestTab() {
   const [project, setProject] = useState(null);
   // { slug, displayName, relativeDir, videosBaseUrl }
@@ -36,6 +44,13 @@ export default function TestTab() {
   const [imageAsset, setImageAsset] = useState(null);
   const [videoAsset, setVideoAsset] = useState(null);
   const [audioAsset, setAudioAsset] = useState(null);
+  const [videoCandidateUrl, setVideoCandidateUrl] = useState('');
+  const [videoConfirmPending, setVideoConfirmPending] = useState(false);
+  const [generateError, setGenerateError] = useState('');
+  const [videoGenMode, setVideoGenMode] = useState('image'); // image | text
+  const [videoDuration, setVideoDuration] = useState('5');
+  const [videoGenerateAudio, setVideoGenerateAudio] = useState(false);
+  const [videoAspectRatio, setVideoAspectRatio] = useState('16:9');
   const [selectedStaticAssets, setSelectedStaticAssets] = useState({
     0: { image: null, video: null },
     1: { image: null, video: null },
@@ -56,7 +71,7 @@ export default function TestTab() {
     setProjectListError('');
     try {
       const res = await fetch(getApiUrl('/api/workbench/projects?limit=300'));
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) {
         const detail = typeof data?.detail === 'string' ? data.detail : '加载项目列表失败';
         throw new Error(detail);
@@ -106,6 +121,13 @@ export default function TestTab() {
     setImageAsset(null);
     setVideoAsset(null);
     setAudioAsset(null);
+    setVideoCandidateUrl('');
+    setVideoConfirmPending(false);
+    setGenerateError('');
+    setVideoGenMode('image');
+    setVideoDuration('5');
+    setVideoGenerateAudio(false);
+    setVideoAspectRatio('16:9');
     setSelectedStaticAssets({
       0: { image: null, video: null },
       1: { image: null, video: null },
@@ -152,11 +174,7 @@ export default function TestTab() {
         body: JSON.stringify({ name }),
       });
       let data = {};
-      try {
-        data = await res.json();
-      } catch {
-        /* ignore */
-      }
+      data = await parseJsonSafe(res);
       if (!res.ok) {
         const msg = typeof data.detail === 'string' ? data.detail : Array.isArray(data.detail) ? data.detail[0]?.msg : data.detail;
         throw new Error(msg || `HTTP ${res.status}`);
@@ -186,7 +204,7 @@ export default function TestTab() {
     setAssetPickerItems([]);
     try {
       const res = await fetch(getApiUrl('/api/workbench/static-assets?kind=all&limit=300'));
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) {
         const detail = typeof data?.detail === 'string' ? data.detail : '加载素材失败';
         throw new Error(detail);
@@ -243,18 +261,58 @@ export default function TestTab() {
 
   const handleGenerate = async (event) => {
     event.preventDefault();
-    if (!prompt.trim()) return;
+    const promptRequired = composerConfigByStep[step]?.requirePrompt;
+    if (promptRequired && !prompt.trim()) return;
 
     setGenerating(true);
+    setGenerateError('');
     try {
       if (step === 0) {
         console.log('[TestTab] generate image', { project: project?.slug, model, prompt });
         setImageAsset('image_ready');
+        setVideoCandidateUrl('');
+        setVideoConfirmPending(false);
         setStep(1);
       } else if (step === 1) {
-        console.log('[TestTab] generate video', { project: project?.slug, model, prompt, imageAsset });
-        setVideoAsset('video_ready');
-        setStep(2);
+        let endpoint = '/api/workbench/kling/text-to-video';
+        let body = {
+          prompt: prompt.trim(),
+          duration: videoDuration,
+          generate_audio: videoGenerateAudio,
+          aspect_ratio: videoAspectRatio,
+        };
+
+        if (videoGenMode === 'image') {
+          const startImageUrl = selectedStaticAssets[1]?.image?.url || selectedStaticAssets[0]?.image?.url;
+          if (!startImageUrl) {
+            throw new Error('图生视频模式下，阶段二需要先选择图片素材（image）。');
+          }
+          const absoluteImageUrl = startImageUrl.startsWith('http') ? startImageUrl : getApiUrl(startImageUrl);
+          endpoint = '/api/workbench/kling/image-to-video';
+          body = {
+            start_image_url: absoluteImageUrl,
+            prompt: prompt.trim(),
+            duration: videoDuration,
+            generate_audio: videoGenerateAudio,
+          };
+        }
+
+        const res = await fetch(getApiUrl(endpoint), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await parseJsonSafe(res);
+        if (!res.ok) {
+          const detail = typeof data?.detail === 'string' ? data.detail : '视频生成失败';
+          throw new Error(detail);
+        }
+        if (!data?.video_url) {
+          throw new Error('Kling 返回缺少 video_url');
+        }
+        setVideoCandidateUrl(data.video_url);
+        setVideoConfirmPending(true);
+        setVideoAsset(null);
       } else if (step === 2) {
         console.log('[TestTab] generate audio', { project: project?.slug, model, prompt });
         setAudioAsset('audio_ready');
@@ -262,18 +320,39 @@ export default function TestTab() {
       } else {
         console.log('[TestTab] lipsync', { project: project?.slug, model, prompt, videoAsset, audioAsset });
       }
-      await new Promise((r) => setTimeout(r, 400));
+      if (step !== 1) {
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } catch (err) {
+      setGenerateError(err?.message || '生成失败');
     } finally {
       setGenerating(false);
     }
   };
+
+  const confirmStageTwoVideo = () => {
+    if (!videoCandidateUrl) return;
+    setVideoAsset(videoCandidateUrl);
+    setVideoConfirmPending(false);
+    setStep(2);
+  };
+
+  const rejectStageTwoVideo = () => {
+    setVideoCandidateUrl('');
+    setVideoConfirmPending(false);
+    setVideoAsset(null);
+  };
+
+  const stepOnePlaceholder = videoGenMode === 'image'
+    ? '输入图生视频提示词（必填），并确保已选择图片素材...'
+    : '输入文生视频提示词（必填）...';
 
   const renderAssetSelector = (targetStep) => {
     const picked = selectedStaticAssets[targetStep] || { image: null, video: null };
     return (
       <div className="mb-2">
         <div className="flex items-center justify-between gap-2 mb-2">
-          <label className="block text-sm font-medium text-zinc-300">User prompt</label>
+          <label className="block text-sm font-medium text-zinc-300">提示词与素材</label>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -329,10 +408,10 @@ export default function TestTab() {
   );
 
   const composerConfigByStep = {
-    0: { placeholder: 'Describe what you want the model to generate...', buttonText: 'Generate Image', requirePrompt: true },
-    1: { placeholder: 'Describe what video you want...', buttonText: 'Generate Video', requirePrompt: true },
-    2: { placeholder: 'Describe what audio/voiceover you want...', buttonText: 'Generate Audio', requirePrompt: true },
-    3: { placeholder: 'Optional extra instructions for lipsync...', buttonText: 'Run Lipsync', requirePrompt: false },
+    0: { placeholder: '输入你想生成的图片描述（当前为占位流程）...', buttonText: '生成图片', requirePrompt: true },
+    1: { placeholder: stepOnePlaceholder, buttonText: '生成视频', requirePrompt: true },
+    2: { placeholder: '输入音频/配音需求（当前为占位流程）...', buttonText: '生成音频', requirePrompt: true },
+    3: { placeholder: '可选：输入口型合成补充说明（当前为占位流程）...', buttonText: '执行口型合成', requirePrompt: false },
   };
 
   /* ── 主页：未进入项目 ───────────────────────────────── */
@@ -629,9 +708,79 @@ export default function TestTab() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-white">生成视频</h2>
-                  <p className="text-xs text-zinc-500 mt-1">基于图片素材生成视频（占位）。</p>
+                  <p className="text-xs text-zinc-500 mt-1">支持图生视频（Kling v3）和文生视频（Kling v3）。</p>
                   <div className="mt-3 text-xs text-zinc-400">
-                    Image asset: <span className="text-zinc-200 font-mono">{String(imageAsset || 'none')}</span>
+                    当前模式：
+                    <span className="text-zinc-200 font-semibold ml-1">{videoGenMode === 'image' ? '图生视频' : '文生视频'}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-400">
+                    图片素材：
+                    <span className="text-zinc-200 font-mono ml-1">{String(imageAsset || 'none')}</span>
+                    {videoGenMode === 'text' && <span className="text-zinc-500 ml-2">（文生模式可不选）</span>}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVideoGenMode('image')}
+                      className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                        videoGenMode === 'image'
+                          ? 'border-violet-500/40 bg-violet-500/10 text-violet-300'
+                          : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10'
+                      }`}
+                    >
+                      图生视频
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVideoGenMode('text')}
+                      className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                        videoGenMode === 'text'
+                          ? 'border-violet-500/40 bg-violet-500/10 text-violet-300'
+                          : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10'
+                      }`}
+                    >
+                      文生视频
+                    </button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs text-zinc-400 mb-1">duration</label>
+                      <select
+                        value={videoDuration}
+                        onChange={(e) => setVideoDuration(e.target.value)}
+                        className="input-field text-sm"
+                      >
+                        {['3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'].map((v) => (
+                          <option key={v} value={v}>{v}s</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-zinc-400 mb-1">generate_audio</label>
+                      <select
+                        value={videoGenerateAudio ? 'true' : 'false'}
+                        onChange={(e) => setVideoGenerateAudio(e.target.value === 'true')}
+                        className="input-field text-sm"
+                      >
+                        <option value="false">false</option>
+                        <option value="true">true</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-zinc-400 mb-1">
+                        aspect_ratio {videoGenMode === 'image' ? '(文生模式生效)' : ''}
+                      </label>
+                      <select
+                        value={videoAspectRatio}
+                        onChange={(e) => setVideoAspectRatio(e.target.value)}
+                        className="input-field text-sm"
+                        disabled={videoGenMode === 'image'}
+                      >
+                        {['16:9', '9:16', '1:1'].map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
                 <button
@@ -648,7 +797,30 @@ export default function TestTab() {
             </div>
 
             <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] flex items-center justify-center text-zinc-500 text-sm">
-              参数配置组件占位区（后续可在此添加参数表单）
+              {videoConfirmPending && videoCandidateUrl ? (
+                <div className="w-full max-w-3xl">
+                  <div className="text-sm text-zinc-300 mb-3">Kling v3 已生成候选视频，请确认：</div>
+                  <video src={videoCandidateUrl} controls className="w-full rounded-xl border border-white/10 bg-black/40" />
+                  <div className="mt-4 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={rejectStageTwoVideo}
+                      className="btn-secondary px-4 py-2 text-xs"
+                    >
+                      不确定，返回修改
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmStageTwoVideo}
+                      className="btn-primary px-4 py-2 text-xs"
+                    >
+                      确定，进入阶段三
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>参数配置组件占位区（后续可在此添加参数表单）</div>
+              )}
             </div>
           </div>
         )}
@@ -703,11 +875,16 @@ export default function TestTab() {
           </div>
 
           <form onSubmit={handleGenerate} className="pt-3">
+            {generateError && (
+              <div className="mb-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                {generateError}
+              </div>
+            )}
             {renderBottomComposer(
               step,
               composerConfigByStep[step].placeholder,
               composerConfigByStep[step].buttonText,
-              composerConfigByStep[step].requirePrompt
+              step === 1 ? !videoConfirmPending : composerConfigByStep[step].requirePrompt
             )}
           </form>
 
