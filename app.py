@@ -2,18 +2,15 @@ import os
 import shutil
 import asyncio
 import re
+from urllib.parse import quote, unquote
 from dotenv import load_dotenv
-from typing import Optional
-from api_keys import (
-    resolve_upload_post_key,
-    get_upload_post_default_username,
-)
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from workbench_video import router as workbench_video_router
+import httpx
 
 load_dotenv()
 
@@ -24,6 +21,19 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 WORKBENCH_PROJECTS_ROOT = os.environ.get("WORKBENCH_PROJECTS_ROOT", os.path.join(OUTPUT_DIR, "projects"))
 WORKBENCH_ASSETS_ROOT = os.environ.get("WORKBENCH_ASSETS_ROOT", os.path.join(OUTPUT_DIR, "workbench_assets"))
+WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL = os.environ.get(
+    "WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL",
+    "https://raw.githubusercontent.com/SuWeiheng200317/AI-shorts_Static_Resources/main",
+).rstrip("/")
+WORKBENCH_GITHUB_REPO_API_TREE_URL = os.environ.get(
+    "WORKBENCH_GITHUB_REPO_API_TREE_URL",
+    "https://api.github.com/repos/SuWeiheng200317/AI-shorts_Static_Resources/git/trees/main?recursive=1",
+)
+WORKBENCH_GITHUB_REPO_TREE_PAGE_URL = os.environ.get(
+    "WORKBENCH_GITHUB_REPO_TREE_PAGE_URL",
+    "https://github.com/SuWeiheng200317/AI-shorts_Static_Resources/tree/main",
+)
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 os.makedirs(WORKBENCH_PROJECTS_ROOT, exist_ok=True)
 os.makedirs(WORKBENCH_ASSETS_ROOT, exist_ok=True)
 
@@ -80,9 +90,6 @@ app.add_middleware(
 app.mount("/videos", StaticFiles(directory=OUTPUT_DIR), name="videos")
 app.mount("/workbench-assets", StaticFiles(directory=WORKBENCH_ASSETS_ROOT), name="workbench-assets")
 
-import httpx
-
-
 def _sanitize_workbench_project_folder_name(name: str) -> str:
     """将用户输入的项目名转为安全的文件夹名（禁止路径穿越与非法字符）。"""
     raw = (name or "").strip()
@@ -103,6 +110,12 @@ def _sanitize_workbench_project_folder_name(name: str) -> str:
 
 def _safe_relpath(path: str) -> str:
     return path.replace("\\", "/")
+
+
+def _build_github_asset_url(rel_url_path: str) -> str:
+    # Keep "/" separators while encoding special characters in each segment.
+    encoded_path = "/".join(quote(part) for part in rel_url_path.split("/"))
+    return f"{WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL}/{encoded_path}"
 
 
 def _collect_workbench_assets(kind: str, limit: int):
@@ -136,6 +149,104 @@ def _collect_workbench_assets(kind: str, limit: int):
             })
 
     items.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+    return items[:limit]
+
+
+async def _collect_workbench_assets_from_github(kind: str, limit: int):
+    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    video_exts = {".mp4", ".mov", ".webm", ".mkv"}
+    items = []
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "AI-short-main-workbench",
+    }
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.get(WORKBENCH_GITHUB_REPO_API_TREE_URL, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+
+    tree = data.get("tree", []) if isinstance(data, dict) else []
+    for node in tree:
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") != "blob":
+            continue
+
+        path = str(node.get("path") or "")
+        filename = os.path.basename(path)
+        ext = os.path.splitext(filename)[1].lower()
+        asset_type = None
+        if ext in image_exts:
+            asset_type = "image"
+        elif ext in video_exts:
+            asset_type = "video"
+        else:
+            continue
+
+        if kind != "all" and kind != asset_type:
+            continue
+
+        rel_url_path = _safe_relpath(path)
+        items.append({
+            "type": asset_type,
+            "name": filename,
+            "relative_path": rel_url_path,
+            "url": _build_github_asset_url(rel_url_path),
+            # Git tree API does not include mtime; keep 0 for stable shape.
+            "mtime": 0,
+        })
+
+    items.sort(key=lambda x: x.get("relative_path", ""))
+    return items[:limit]
+
+
+async def _collect_workbench_assets_from_github_tree_page(kind: str, limit: int):
+    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    video_exts = {".mp4", ".mov", ".webm", ".mkv"}
+    items = []
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.get(
+            WORKBENCH_GITHUB_REPO_TREE_PAGE_URL,
+            headers={"User-Agent": "AI-short-main-workbench"},
+        )
+        resp.raise_for_status()
+        html = resp.text
+
+    # Fallback parser for root-level files from GitHub tree page.
+    # Example href: /SuWeiheng200317/AI-shorts_Static_Resources/blob/main/222.png
+    blob_paths = set(
+        re.findall(
+            r'href="/SuWeiheng200317/AI-shorts_Static_Resources/blob/main/([^"#?]+)"',
+            html,
+        )
+    )
+    for encoded_path in blob_paths:
+        rel_url_path = _safe_relpath(unquote(encoded_path))
+        filename = os.path.basename(rel_url_path)
+        ext = os.path.splitext(filename)[1].lower()
+        asset_type = None
+        if ext in image_exts:
+            asset_type = "image"
+        elif ext in video_exts:
+            asset_type = "video"
+        else:
+            continue
+        if kind != "all" and kind != asset_type:
+            continue
+        items.append({
+            "type": asset_type,
+            "name": filename,
+            "relative_path": rel_url_path,
+            "url": _build_github_asset_url(rel_url_path),
+            "mtime": 0,
+        })
+
+    items.sort(key=lambda x: x.get("relative_path", ""))
     return items[:limit]
 
 
@@ -205,66 +316,17 @@ async def workbench_static_assets(kind: str = "all", limit: int = 100):
         raise HTTPException(status_code=400, detail=f"kind must be one of: {', '.join(sorted(allowed))}")
     safe_limit = max(1, min(limit, 500))
     assets = _collect_workbench_assets(kind, safe_limit)
+    try:
+        # Prefer GitHub tree page parsing (works without token and is fast for simple repos).
+        assets = await _collect_workbench_assets_from_github_tree_page(kind, safe_limit)
+        if not assets:
+            assets = await _collect_workbench_assets_from_github(kind, safe_limit)
+        if not assets:
+            print("⚠️ GitHub returned no assets, fallback to local assets")
+            assets = _collect_workbench_assets(kind, safe_limit)
+    except Exception as e:
+        # Final fallback to local directory scan if GitHub is unavailable.
+        print(f"⚠️ GitHub assets fetch failed, fallback to local assets: {e}")
+        assets = _collect_workbench_assets(kind, safe_limit)
     return {"assets": assets}
-
-
-@app.get("/api/social/user")
-async def get_social_user(
-    x_upload_post_key: Optional[str] = Header(None, alias="X-Upload-Post-Key"),
-):
-    """代理 Upload-Post 用户信息接口，返回可用账号（密钥来自服务端配置，可选请求头覆盖用于调试）。"""
-    api_key = resolve_upload_post_key(x_upload_post_key)
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing API key: upload_post_api_key (set UPLOAD_POST_API_KEY in .env, or X-Upload-Post-Key for debug)",
-        )
-
-    url = "https://api.upload-post.com/api/uploadposts/users"
-    print(f"🔍 Fetching User ID from: {url}")
-    headers = {"Authorization": f"Apikey {api_key}"}
-    
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                print(f"❌ Upload-Post User Fetch Error: {resp.text}")
-                raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch user: {resp.text}")
-            
-            data = resp.json()
-            print(f"🔍 Upload-Post User Response: {data}")
-            
-            user_id = None
-            # 返回结构通常为 {'success': True, 'profiles': [{'username': '...'}, ...]}
-            profiles_list = []
-            if isinstance(data, dict):
-                 raw_profiles = data.get('profiles', [])
-                 if isinstance(raw_profiles, list):
-                     for p in raw_profiles:
-                         username = p.get('username')
-                         if username:
-                             # 提取已连接的平台
-                             socials = p.get('social_accounts', {})
-                             connected = []
-                             # 检查常见平台
-                             for platform in ['tiktok', 'instagram', 'youtube']:
-                                 account_info = socials.get(platform)
-                                 # 若为有效对象则视为已连接
-                                 if isinstance(account_info, dict):
-                                     connected.append(platform)
-                             
-                             profiles_list.append({
-                                 "username": username,
-                                 "connected": connected
-                             })
-            
-            default_username = get_upload_post_default_username()
-            if not profiles_list:
-                return {"profiles": [], "error": "No profiles found", "default_username": default_username}
-
-            return {"profiles": profiles_list, "default_username": default_username}
-            
-            
-        except Exception as e:
-             raise HTTPException(status_code=500, detail=str(e))
 

@@ -51,6 +51,7 @@ export default function TestTab() {
   const [videoDuration, setVideoDuration] = useState('5');
   const [videoGenerateAudio, setVideoGenerateAudio] = useState(false);
   const [videoAspectRatio, setVideoAspectRatio] = useState('16:9');
+  const [wanFps, setWanFps] = useState(16);
   const [selectedStaticAssets, setSelectedStaticAssets] = useState({
     0: { image: null, video: null },
     1: { image: null, video: null },
@@ -104,6 +105,51 @@ export default function TestTab() {
       desc: 'Higher quality / higher cost. Best results for final outputs.',
     };
   }, [model]);
+
+  const renderModelSelector = useCallback(() => {
+    return (
+      <div>
+        <label className="block text-sm font-medium text-zinc-300 mb-3">Model</label>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setModel('low')}
+            className={`p-4 rounded-xl border text-left transition-all ${
+              model === 'low'
+                ? 'border-green-500/50 bg-green-500/10 ring-1 ring-green-500/30'
+                : 'border-white/10 bg-white/5 hover:bg-white/10'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-sm font-semibold ${model === 'low' ? 'text-green-300' : 'text-zinc-300'}`}>Low</span>
+            </div>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">Lower cost / faster generation.</p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setModel('high')}
+            className={`p-4 rounded-xl border text-left transition-all ${
+              model === 'high'
+                ? 'border-violet-500/50 bg-violet-500/10 ring-1 ring-violet-500/30'
+                : 'border-white/10 bg-white/5 hover:bg-white/10'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-sm font-semibold ${model === 'high' ? 'text-violet-300' : 'text-zinc-300'}`}>High</span>
+            </div>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">Best quality / higher cost.</p>
+          </button>
+        </div>
+
+        <div className="mt-3 text-xs text-zinc-500">
+          Selected: <span className="text-zinc-300 font-semibold">{modelCopy.title}</span>{' '}
+          <span className={`ml-2 px-2 py-0.5 rounded-full border border-white/10 ${modelCopy.badgeClasses}`}>{modelCopy.badge}</span>
+          <div className="mt-1 text-[11px] text-zinc-600">{modelCopy.desc}</div>
+        </div>
+      </div>
+    );
+  }, [model, modelCopy]);
 
   const steps = [
     { id: 0, title: '生成图片' },
@@ -274,13 +320,21 @@ export default function TestTab() {
         setVideoConfirmPending(false);
         setStep(1);
       } else if (step === 1) {
-        let endpoint = '/api/workbench/kling/text-to-video';
-        let body = {
-          prompt: prompt.trim(),
-          duration: videoDuration,
-          generate_audio: videoGenerateAudio,
-          aspect_ratio: videoAspectRatio,
-        };
+        const useWan = model === 'low';
+        let endpoint = useWan ? '/api/workbench/wan/text-to-video' : '/api/workbench/kling/text-to-video';
+        let body = useWan
+          ? {
+              prompt: prompt.trim(),
+              duration: videoDuration,
+              aspect_ratio: videoAspectRatio,
+              frames_per_second: wanFps,
+            }
+          : {
+              prompt: prompt.trim(),
+              duration: videoDuration,
+              generate_audio: videoGenerateAudio,
+              aspect_ratio: videoAspectRatio,
+            };
 
         if (videoGenMode === 'image') {
           const startImageUrl = selectedStaticAssets[1]?.image?.url || selectedStaticAssets[0]?.image?.url;
@@ -288,13 +342,20 @@ export default function TestTab() {
             throw new Error('图生视频模式下，阶段二需要先选择图片素材（image）。');
           }
           const absoluteImageUrl = startImageUrl.startsWith('http') ? startImageUrl : getApiUrl(startImageUrl);
-          endpoint = '/api/workbench/kling/image-to-video';
-          body = {
-            start_image_url: absoluteImageUrl,
-            prompt: prompt.trim(),
-            duration: videoDuration,
-            generate_audio: videoGenerateAudio,
-          };
+          endpoint = useWan ? '/api/workbench/wan/image-to-video' : '/api/workbench/kling/image-to-video';
+          body = useWan
+            ? {
+                image_url: absoluteImageUrl,
+                prompt: prompt.trim(),
+                duration: videoDuration,
+                frames_per_second: wanFps,
+              }
+            : {
+                start_image_url: absoluteImageUrl,
+                prompt: prompt.trim(),
+                duration: videoDuration,
+                generate_audio: videoGenerateAudio,
+              };
         }
 
         const res = await fetch(getApiUrl(endpoint), {
@@ -653,48 +714,7 @@ export default function TestTab() {
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-3">Model</label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setModel('low')}
-                  className={`p-4 rounded-xl border text-left transition-all ${
-                    model === 'low'
-                      ? 'border-green-500/50 bg-green-500/10 ring-1 ring-green-500/30'
-                      : 'border-white/10 bg-white/5 hover:bg-white/10'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={`text-sm font-semibold ${model === 'low' ? 'text-green-300' : 'text-zinc-300'}`}>Low</span>
-                    <span className="text-xs font-mono text-green-400 bg-green-500/10 px-2 py-0.5 rounded-full">fast</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 leading-relaxed">Lower cost / faster generation.</p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setModel('high')}
-                  className={`p-4 rounded-xl border text-left transition-all ${
-                    model === 'high'
-                      ? 'border-violet-500/50 bg-violet-500/10 ring-1 ring-violet-500/30'
-                      : 'border-white/10 bg-white/5 hover:bg-white/10'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={`text-sm font-semibold ${model === 'high' ? 'text-violet-300' : 'text-zinc-300'}`}>High</span>
-                    <span className="text-xs font-mono text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded-full">quality</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 leading-relaxed">Best quality / higher cost.</p>
-                </button>
-              </div>
-
-              <div className="mt-3 text-xs text-zinc-500">
-                Selected: <span className="text-zinc-300 font-semibold">{modelCopy.title}</span>{' '}
-                <span className={`ml-2 px-2 py-0.5 rounded-full border border-white/10 ${modelCopy.badgeClasses}`}>{modelCopy.badge}</span>
-                <div className="mt-1 text-[11px] text-zinc-600">{modelCopy.desc}</div>
-              </div>
-            </div>
+            {renderModelSelector()}
 
             <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] flex items-center justify-center text-zinc-500 text-sm">
               参数配置组件占位区（后续可在此添加参数表单）
@@ -708,7 +728,7 @@ export default function TestTab() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-white">生成视频</h2>
-                  <p className="text-xs text-zinc-500 mt-1">支持图生视频（Kling v3）和文生视频（Kling v3）。</p>
+                  <div className="mt-4">{renderModelSelector()}</div>
                   <div className="mt-3 text-xs text-zinc-400">
                     当前模式：
                     <span className="text-zinc-200 font-semibold ml-1">{videoGenMode === 'image' ? '图生视频' : '文生视频'}</span>
@@ -754,6 +774,9 @@ export default function TestTab() {
                           <option key={v} value={v}>{v}s</option>
                         ))}
                       </select>
+                      <div className="mt-1 text-[10px] text-zinc-600 min-h-[14px]">
+                        <span className="opacity-0">placeholder</span>
+                      </div>
                     </div>
                     <div>
                       <label className="block text-xs text-zinc-400 mb-1">generate_audio</label>
@@ -761,15 +784,17 @@ export default function TestTab() {
                         value={videoGenerateAudio ? 'true' : 'false'}
                         onChange={(e) => setVideoGenerateAudio(e.target.value === 'true')}
                         className="input-field text-sm"
+                        disabled={model === 'low'}
                       >
                         <option value="false">false</option>
                         <option value="true">true</option>
                       </select>
+                      <div className="mt-1 text-[10px] text-zinc-600 min-h-[14px]">
+                        <span className="opacity-0">placeholder</span>
+                      </div>
                     </div>
                     <div>
-                      <label className="block text-xs text-zinc-400 mb-1">
-                        aspect_ratio {videoGenMode === 'image' ? '(文生模式生效)' : ''}
-                      </label>
+                      <label className="block text-xs text-zinc-400 mb-1">aspect_ratio</label>
                       <select
                         value={videoAspectRatio}
                         onChange={(e) => setVideoAspectRatio(e.target.value)}
@@ -780,6 +805,45 @@ export default function TestTab() {
                           <option key={v} value={v}>{v}</option>
                         ))}
                       </select>
+                      <div className="mt-1 text-[10px] text-zinc-600 min-h-[14px]">
+                        <span className={videoGenMode === 'image' ? '' : 'opacity-0'}>
+                          图生模式不生效
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs text-zinc-400">每秒帧数</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={4}
+                          max={60}
+                          step={1}
+                          value={wanFps}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            if (Number.isFinite(v)) setWanFps(Math.max(4, Math.min(60, Math.round(v))));
+                          }}
+                          className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-sm text-zinc-200 outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50"
+                          disabled={model !== 'low'}
+                        />
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min={4}
+                      max={60}
+                      step={1}
+                      value={wanFps}
+                      onChange={(e) => setWanFps(Number(e.target.value))}
+                      className={`w-full accent-violet-500 ${model !== 'low' ? 'opacity-40 cursor-not-allowed' : ''}`}
+                      disabled={model !== 'low'}
+                    />
+                    <div className="mt-1 text-[10px] text-zinc-600 min-h-[14px]">
+                      <span className={model === 'low' ? '' : 'opacity-0'}>仅 WAN 生效（4–60）</span>
                     </div>
                   </div>
                 </div>
@@ -799,7 +863,7 @@ export default function TestTab() {
             <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] flex items-center justify-center text-zinc-500 text-sm">
               {videoConfirmPending && videoCandidateUrl ? (
                 <div className="w-full max-w-3xl">
-                  <div className="text-sm text-zinc-300 mb-3">Kling v3 已生成候选视频，请确认：</div>
+                  <div className="text-sm text-zinc-300 mb-3">{model === 'low' ? 'WAN v2.2-a14b' : 'Kling v3'} 已生成候选视频，请确认：</div>
                   <video src={videoCandidateUrl} controls className="w-full rounded-xl border border-white/10 bg-black/40" />
                   <div className="mt-4 flex items-center gap-2">
                     <button

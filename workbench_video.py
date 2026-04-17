@@ -17,6 +17,11 @@ router = APIRouter()
 _fal_subscribe_lock = threading.Lock()
 
 ASSETS_PREFIX = "/workbench-assets/"
+WAN_DEFAULT_FPS = 16
+WAN_MIN_FRAMES = 17
+WAN_MAX_FRAMES = 161
+WAN_MIN_FPS = 4
+WAN_MAX_FPS = 60
 
 
 def _assets_root() -> str:
@@ -87,7 +92,7 @@ def _extract_video_url_from_fal(data: Any) -> Optional[str]:
     return None
 
 
-def _subscribe_kling(model_id: str, arguments: Dict[str, Any], fal_key: str) -> Dict[str, Any]:
+def _subscribe_fal(model_id: str, arguments: Dict[str, Any], fal_key: str) -> Dict[str, Any]:
     """同步调用 fal 队列 API（subscribe），避免 httpx 长连接被服务端断开。"""
     old = os.environ.get("FAL_KEY")
     try:
@@ -103,6 +108,22 @@ def _subscribe_kling(model_id: str, arguments: Dict[str, Any], fal_key: str) -> 
             os.environ.pop("FAL_KEY", None)
         else:
             os.environ["FAL_KEY"] = old
+
+
+def _wan_num_frames_from_duration(duration: Optional[str], frames_per_second: int) -> int:
+    """
+    WAN uses num_frames (17..161) at frames_per_second.
+    We map duration seconds to num_frames: num_frames = seconds * fps + 1
+    (matches 5s -> 81 default).
+    """
+    try:
+        sec = int(str(duration or "").strip() or "5")
+    except Exception:
+        sec = 5
+    sec = max(1, sec)
+    fps = int(frames_per_second)
+    frames = sec * fps + 1
+    return max(WAN_MIN_FRAMES, min(WAN_MAX_FRAMES, frames))
 
 
 class WorkbenchKlingImageToVideoRequest(BaseModel):
@@ -150,7 +171,7 @@ async def workbench_kling_image_to_video(
     try:
         data = await loop.run_in_executor(
             None,
-            lambda: _subscribe_kling(
+            lambda: _subscribe_fal(
                 "fal-ai/kling-video/v3/pro/image-to-video",
                 arguments,
                 fal_key,
@@ -202,7 +223,7 @@ async def workbench_kling_text_to_video(
     try:
         data = await loop.run_in_executor(
             None,
-            lambda: _subscribe_kling(
+            lambda: _subscribe_fal(
                 "fal-ai/kling-video/v3/pro/text-to-video",
                 arguments,
                 fal_key,
@@ -221,5 +242,140 @@ async def workbench_kling_text_to_video(
             status_code=500,
             detail=f"Kling response missing video.url: {snippet}",
         )
+
+    return {"video_url": video_url, "raw": data}
+
+
+class WorkbenchWanImageToVideoRequest(BaseModel):
+    image_url: str
+    prompt: str
+    duration: Optional[str] = "5"
+    frames_per_second: Optional[int] = WAN_DEFAULT_FPS
+    aspect_ratio: Optional[str] = "auto"  # auto | 16:9 | 9:16 | 1:1
+    negative_prompt: Optional[str] = ""
+    resolution: Optional[str] = "720p"  # 480p | 580p | 720p
+
+
+class WorkbenchWanTextToVideoRequest(BaseModel):
+    prompt: str
+    duration: Optional[str] = "5"
+    frames_per_second: Optional[int] = WAN_DEFAULT_FPS
+    aspect_ratio: Optional[str] = "16:9"  # 16:9 | 9:16 | 1:1
+    negative_prompt: Optional[str] = ""
+    resolution: Optional[str] = "720p"  # 480p | 580p | 720p
+
+
+@router.post("/api/workbench/wan/image-to-video")
+async def workbench_wan_image_to_video(
+    req: WorkbenchWanImageToVideoRequest,
+    x_fal_key: Optional[str] = Header(None, alias="X-Fal-Key"),
+):
+    fal_key = resolve_fal_key(x_fal_key)
+    if not fal_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing API key: fal_key (set FAL_KEY in .env, or X-Fal-Key for debug)",
+        )
+
+    prompt = (req.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    image_url = (req.image_url or "").strip()
+    if not image_url:
+        raise HTTPException(status_code=400, detail="image_url is required")
+    if image_url.startswith("http://"):
+        raise HTTPException(status_code=400, detail="WAN requires https:// URL for image_url")
+
+    try:
+        fps = int(req.frames_per_second if req.frames_per_second is not None else WAN_DEFAULT_FPS)
+    except Exception:
+        fps = WAN_DEFAULT_FPS
+    fps = max(WAN_MIN_FPS, min(WAN_MAX_FPS, fps))
+
+    arguments = {
+        "image_url": image_url,
+        "prompt": prompt,
+        "negative_prompt": str(req.negative_prompt or ""),
+        "frames_per_second": fps,
+        "num_frames": _wan_num_frames_from_duration(req.duration, fps),
+        "resolution": str(req.resolution or "720p"),
+        "aspect_ratio": str(req.aspect_ratio or "auto"),
+    }
+
+    loop = asyncio.get_running_loop()
+    try:
+        data = await loop.run_in_executor(
+            None,
+            lambda: _subscribe_fal(
+                "fal-ai/wan/v2.2-a14b/image-to-video",
+                arguments,
+                fal_key,
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WAN request failed: {str(e)}")
+
+    video_url = _extract_video_url_from_fal(data)
+    if not video_url:
+        try:
+            snippet = json.dumps(data, ensure_ascii=False)[:800]
+        except Exception:
+            snippet = str(data)[:800]
+        raise HTTPException(status_code=500, detail=f"WAN response missing video.url: {snippet}")
+
+    return {"video_url": video_url, "raw": data}
+
+
+@router.post("/api/workbench/wan/text-to-video")
+async def workbench_wan_text_to_video(
+    req: WorkbenchWanTextToVideoRequest,
+    x_fal_key: Optional[str] = Header(None, alias="X-Fal-Key"),
+):
+    fal_key = resolve_fal_key(x_fal_key)
+    if not fal_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing API key: fal_key (set FAL_KEY in .env, or X-Fal-Key for debug)",
+        )
+
+    prompt = (req.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    try:
+        fps = int(req.frames_per_second if req.frames_per_second is not None else WAN_DEFAULT_FPS)
+    except Exception:
+        fps = WAN_DEFAULT_FPS
+    fps = max(WAN_MIN_FPS, min(WAN_MAX_FPS, fps))
+
+    arguments = {
+        "prompt": prompt,
+        "negative_prompt": str(req.negative_prompt or ""),
+        "frames_per_second": fps,
+        "num_frames": _wan_num_frames_from_duration(req.duration, fps),
+        "resolution": str(req.resolution or "720p"),
+        "aspect_ratio": str(req.aspect_ratio or "16:9"),
+    }
+
+    loop = asyncio.get_running_loop()
+    try:
+        data = await loop.run_in_executor(
+            None,
+            lambda: _subscribe_fal(
+                "fal-ai/wan/v2.2-a14b/text-to-video",
+                arguments,
+                fal_key,
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WAN request failed: {str(e)}")
+
+    video_url = _extract_video_url_from_fal(data)
+    if not video_url:
+        try:
+            snippet = json.dumps(data, ensure_ascii=False)[:800]
+        except Exception:
+            snippet = str(data)[:800]
+        raise HTTPException(status_code=500, detail=f"WAN response missing video.url: {snippet}")
 
     return {"video_url": video_url, "raw": data}
