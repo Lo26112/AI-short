@@ -31,6 +31,14 @@ select.input-field option:checked,
 select.input-field option:hover,
 select.input-field option:focus {
   background-color: #111c30;
+/* Keep native select dropdown options readable on dark theme */
+.input-field option {
+  background: #18181b;
+  color: #e4e4e7;
+}
+
+.input-field option:checked {
+  background: #3b82f6;
   color: #ffffff;
 }
 

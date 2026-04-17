@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bookmark, CheckSquare, ChevronLeft, ChevronRight, FolderPlus, Loader2, Sparkles, X } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Bookmark, CheckSquare, ChevronLeft, ChevronRight, FolderPlus, Loader2, Sparkles, Trash2, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 function sanitizeWorkbenchProjectFolderName(name) {
@@ -21,6 +21,27 @@ async function parseJsonSafe(res) {
     return {};
   }
 }
+const NANO_BANANA2_ASPECT_RATIOS = [
+  'auto', '21:9', '16:9', '3:2', '4:3', '5:4', '1:1', '4:5', '3:4', '2:3', '9:16', '4:1', '1:4', '8:1', '1:8',
+];
+
+const NANO_BANANA2_DEFAULTS = {
+  num_images: 1,
+  aspect_ratio: 'auto',
+  output_format: 'png',
+  resolution: '1K',
+  enable_web_search: false,
+  thinking_level: '',
+};
+
+const ELEMENT_BADGE_COLORS = [
+  { bg: 'rgba(139, 92, 246, 0.24)', border: 'rgba(139, 92, 246, 0.6)', text: '#ddd6fe' }, // violet
+  { bg: 'rgba(217, 70, 239, 0.2)', border: 'rgba(217, 70, 239, 0.55)', text: '#f5d0fe' }, // fuchsia
+  { bg: 'rgba(59, 130, 246, 0.22)', border: 'rgba(59, 130, 246, 0.55)', text: '#bfdbfe' }, // blue
+  { bg: 'rgba(16, 185, 129, 0.2)', border: 'rgba(16, 185, 129, 0.55)', text: '#a7f3d0' }, // emerald
+  { bg: 'rgba(245, 158, 11, 0.2)', border: 'rgba(245, 158, 11, 0.55)', text: '#fde68a' }, // amber
+  { bg: 'rgba(244, 63, 94, 0.2)', border: 'rgba(244, 63, 94, 0.55)', text: '#fecdd3' }, // rose
+];
 
 export default function TestTab() {
   const [project, setProject] = useState(null);
@@ -33,11 +54,12 @@ export default function TestTab() {
   const [projectList, setProjectList] = useState([]);
   const [projectListLoading, setProjectListLoading] = useState(false);
   const [projectListError, setProjectListError] = useState('');
+  const [deletingProjectSlug, setDeletingProjectSlug] = useState(null);
 
-  // Workbench wizard (4 steps)
+  // Workbench wizard state
   const [step, setStep] = useState(0);
 
-  const [model, setModel] = useState('low'); // 'low' | 'high'
+  const [model] = useState('low'); // 'low' | 'high'
   const [prompt, setPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
 
@@ -53,20 +75,28 @@ export default function TestTab() {
   const [videoAspectRatio, setVideoAspectRatio] = useState('16:9');
   const [wanFps, setWanFps] = useState(16);
   const [selectedStaticAssets, setSelectedStaticAssets] = useState({
-    0: { image: null, video: null },
-    1: { image: null, video: null },
-    2: { image: null, video: null },
-    3: { image: null, video: null },
+    0: { images: [], video: null },
+    1: { images: [], video: null },
+    2: { images: [], video: null },
+    3: { images: [], video: null },
   });
 
   const [showAssetPicker, setShowAssetPicker] = useState(false);
-  const [assetPickerTab, setAssetPickerTab] = useState('image'); // image | video
+  const [assetPickerTab, setAssetPickerTab] = useState('all'); // all | image | video
   const [assetPickerStep, setAssetPickerStep] = useState(0);
   const [assetPickerLoading, setAssetPickerLoading] = useState(false);
   const [assetPickerError, setAssetPickerError] = useState('');
   const [assetPickerItems, setAssetPickerItems] = useState([]);
-  const [assetPickerDraft, setAssetPickerDraft] = useState({ image: null, video: null });
+  const [assetPickerDraft, setAssetPickerDraft] = useState({ images: [], video: null });
+  const [isMentionPicker, setIsMentionPicker] = useState(false);
+  const [mentionInsertPos, setMentionInsertPos] = useState(null);
+  const [previewAsset, setPreviewAsset] = useState(null);
+  const promptEditorRef = useRef(null);
 
+  /** fal-ai/nano-banana-2 (step 0) — user-facing fields; server merges the rest. */
+  const [nanoBanana2, setNanoBanana2] = useState({ ...NANO_BANANA2_DEFAULTS });
+  const [step0GeneratedImageUrls, setStep0GeneratedImageUrls] = useState([]);
+  const [promptElements, setPromptElements] = useState([]);
   const fetchProjectList = useCallback(async () => {
     setProjectListLoading(true);
     setProjectListError('');
@@ -175,16 +205,51 @@ export default function TestTab() {
     setVideoGenerateAudio(false);
     setVideoAspectRatio('16:9');
     setSelectedStaticAssets({
-      0: { image: null, video: null },
-      1: { image: null, video: null },
-      2: { image: null, video: null },
-      3: { image: null, video: null },
+      0: { images: [], video: null },
+      1: { images: [], video: null },
+      2: { images: [], video: null },
+      3: { images: [], video: null },
     });
+    setNanoBanana2({ ...NANO_BANANA2_DEFAULTS });
+    setStep0GeneratedImageUrls([]);
+    setPromptElements([]);
   };
 
   const leaveProject = () => {
     setProject(null);
     resetWizardState();
+  };
+
+  const deleteProject = async (item) => {
+    if (!item?.slug) return;
+    const confirmed = window.confirm(`确定删除项目「${item.display_name || item.slug}」吗？此操作不可恢复。`);
+    if (!confirmed) return;
+
+    setDeletingProjectSlug(item.slug);
+    try {
+      const res = await fetch(getApiUrl(`/api/workbench/projects/${encodeURIComponent(item.slug)}`), {
+        method: 'DELETE',
+      });
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        /* ignore */
+      }
+      if (!res.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : '删除项目失败';
+        throw new Error(detail);
+      }
+
+      if (project?.slug === item.slug) {
+        leaveProject();
+      }
+      await fetchProjectList();
+    } catch (err) {
+      window.alert(err.message || '删除项目失败');
+    } finally {
+      setDeletingProjectSlug(null);
+    }
   };
 
   const openCreateModal = () => {
@@ -242,8 +307,8 @@ export default function TestTab() {
 
   const openAssetPicker = async (targetStep) => {
     setAssetPickerStep(targetStep);
-    setAssetPickerTab('image');
-    setAssetPickerDraft(selectedStaticAssets[targetStep] || { image: null, video: null });
+    setAssetPickerTab('all');
+    setAssetPickerDraft(selectedStaticAssets[targetStep] || { images: [], video: null });
     setShowAssetPicker(true);
     setAssetPickerLoading(true);
     setAssetPickerError('');
@@ -263,25 +328,199 @@ export default function TestTab() {
     }
   };
 
+  const openMentionAssetPicker = async (insertPos) => {
+    setIsMentionPicker(true);
+    setMentionInsertPos(insertPos);
+    setAssetPickerTab('image');
+    setShowAssetPicker(true);
+    setAssetPickerLoading(true);
+    setAssetPickerError('');
+    setAssetPickerItems([]);
+    try {
+      const res = await fetch(getApiUrl('/api/workbench/static-assets?kind=image&limit=300'));
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : '加载图片素材失败';
+        throw new Error(detail);
+      }
+      setAssetPickerItems(data.assets || []);
+    } catch (err) {
+      setAssetPickerError(err.message || '加载图片素材失败');
+    } finally {
+      setAssetPickerLoading(false);
+    }
+  };
+
   const closeAssetPicker = () => {
     setShowAssetPicker(false);
     setAssetPickerError('');
+    setIsMentionPicker(false);
+    setMentionInsertPos(null);
+  };
+
+  const syncContextSelectionToBackend = async (targetStep, urls) => {
+    try {
+      const response = await fetch(getApiUrl('/api/generalprompt/context-selection'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          step: targetStep,
+          project_slug: project?.slug || null,
+          context_image_urls: urls,
+        }),
+      });
+      if (!response.ok) {
+        let responseData = {};
+        try {
+          responseData = await response.json();
+        } catch {
+          /* ignore json parse errors */
+        }
+        const detail = typeof responseData?.detail === 'string' ? responseData.detail : `HTTP ${response.status}`;
+        throw new Error(detail);
+      }
+    } catch (err) {
+      console.error('[TestTab] syncContextSelectionToBackend failed', err);
+    }
+  };
+
+  const openPreviewAsset = (asset) => {
+    setPreviewAsset(asset || null);
+  };
+
+  const closePreviewAsset = () => {
+    setPreviewAsset(null);
+  };
+
+  const serializePromptFromEditor = (root) => {
+    if (!root) return '';
+    const walk = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || '';
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      const token = node.getAttribute('data-token');
+      if (token) return token;
+      let out = '';
+      node.childNodes.forEach((child) => {
+        out += walk(child);
+      });
+      return out;
+    };
+    return walk(root);
+  };
+
+  const getCaretTextOffset = (root) => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return (prompt || '').length;
+    const range = sel.getRangeAt(0);
+    if (!root.contains(range.endContainer)) return (prompt || '').length;
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(root);
+    preRange.setEnd(range.endContainer, range.endOffset);
+    return preRange.toString().length;
+  };
+
+  const escapeHtml = (text) => String(text || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+
+  const buildPromptEditorHTML = (text) => {
+    const tokenRegex = /Elements\[(\d+)\]/g;
+    let html = '';
+    let lastIndex = 0;
+    let match = tokenRegex.exec(text);
+    while (match) {
+      const full = match[0];
+      const idx = Number(match[1]);
+      const element = promptElements[idx];
+      html += escapeHtml(text.slice(lastIndex, match.index));
+      if (element?.url) {
+        const color = element.color || ELEMENT_BADGE_COLORS[idx % ELEMENT_BADGE_COLORS.length];
+        html += `<span contenteditable="false" data-token="${full}" class="inline-flex items-center gap-1 mx-0.5 px-1 py-0.5 rounded bg-white/10 border border-white/15 align-middle">
+  <img src="${escapeHtml(getApiUrl(element.url))}" alt="${escapeHtml(element.name || full)}" class="w-8 h-8 rounded object-cover" />
+  <span style="background:${color.bg};border:1px solid ${color.border};color:${color.text}" class="text-[10px] px-1 py-0.5 rounded">${escapeHtml(full)}</span>
+</span>`;
+      } else {
+        html += `<span contenteditable="false" data-token="${full}" class="inline-flex items-center mx-0.5 px-1 py-0.5 rounded bg-white/10 border border-white/15 text-[10px] text-zinc-300">${escapeHtml(full)}</span>`;
+      }
+      lastIndex = match.index + full.length;
+      match = tokenRegex.exec(text);
+    }
+    html += escapeHtml(text.slice(lastIndex));
+    return html.replaceAll('\n', '<br>');
+  };
+
+  useEffect(() => {
+    const editor = promptEditorRef.current;
+    if (!editor) return;
+    const current = serializePromptFromEditor(editor);
+    if (current === (prompt || '')) return;
+    editor.innerHTML = buildPromptEditorHTML(prompt || '');
+  }, [prompt, promptElements]);
+
+  const removePromptElement = async (removeIndex) => {
+    setPrompt((prev) => {
+      let next = prev.replaceAll(`Elements[${removeIndex}]`, '');
+      for (let i = removeIndex + 1; i <= promptElements.length - 1; i += 1) {
+        next = next.replaceAll(`Elements[${i}]`, `Elements[${i - 1}]`);
+      }
+      return next;
+    });
+    const nextElements = promptElements
+      .filter((item) => item.index !== removeIndex)
+      .map((item, idx) => ({ ...item, index: idx }));
+    setPromptElements(nextElements);
+    await syncContextSelectionToBackend(step, nextElements.map((item) => item.url));
+  };
+
+  const handleMentionAssetSelect = async (asset) => {
+    const insertPos = mentionInsertPos ?? prompt.length;
+    const nextIndex = promptElements.length;
+    const token = `Elements[${nextIndex}]`;
+    setPrompt((prev) => `${prev.slice(0, insertPos)}${token}${prev.slice(insertPos)}`);
+    const nextElements = [
+      ...promptElements,
+      {
+        index: nextIndex,
+        name: asset.name,
+        relative_path: asset.relative_path,
+        url: asset.url,
+        color: ELEMENT_BADGE_COLORS[Math.floor(Math.random() * ELEMENT_BADGE_COLORS.length)],
+      },
+    ];
+    setPromptElements(nextElements);
+    await syncContextSelectionToBackend(step, nextElements.map((item) => item.url));
+    closeAssetPicker();
   };
 
   const toggleDraftAsset = (asset) => {
+    const targetKey = assetPickerTab === 'all' ? asset.type : assetPickerTab;
     setAssetPickerDraft((prev) => {
-      const current = prev[assetPickerTab];
-      if (current?.relative_path === asset.relative_path) {
-        return { ...prev, [assetPickerTab]: null };
+      if (targetKey === 'image') {
+        const currentImages = Array.isArray(prev.images) ? prev.images : [];
+        const exists = currentImages.some((item) => item.relative_path === asset.relative_path);
+        return {
+          ...prev,
+          images: exists
+            ? currentImages.filter((item) => item.relative_path !== asset.relative_path)
+            : [...currentImages, asset],
+        };
       }
-      return { ...prev, [assetPickerTab]: asset };
+
+      const currentVideo = prev.video;
+      if (currentVideo?.relative_path === asset.relative_path) {
+        return { ...prev, video: null };
+      }
+      return { ...prev, video: asset };
     });
   };
 
-  const confirmAssetPicker = () => {
+  const confirmAssetPicker = async () => {
     const nextSelected = {
-      ...(selectedStaticAssets[assetPickerStep] || { image: null, video: null }),
+      ...(selectedStaticAssets[assetPickerStep] || { images: [], video: null }),
       ...assetPickerDraft,
+      images: Array.isArray(assetPickerDraft.images) ? assetPickerDraft.images : [],
     };
     setSelectedStaticAssets((prev) => ({
       ...prev,
@@ -289,30 +528,95 @@ export default function TestTab() {
     }));
 
     // 与原有占位资产字段保持同步，便于后续流程沿用
-    if (nextSelected.image) setImageAsset(nextSelected.image.url);
+    if (nextSelected.images.length > 0) setImageAsset(nextSelected.images[0].url);
     if (nextSelected.video) setVideoAsset(nextSelected.video.url);
 
-    const pathForContext = nextSelected.video?.relative_path || nextSelected.image?.relative_path;
-    if (pathForContext) {
-      const contextLine = `{${pathForContext}}`;
-      setPrompt((prev) => {
-        if (!prev?.trim()) return contextLine;
-        if (prev.includes(contextLine)) return prev;
-        return `${prev}${contextLine}`;
-      });
-    }
+    await syncContextSelectionToBackend(
+      assetPickerStep,
+      nextSelected.images.map((asset) => asset.url).filter(Boolean),
+    );
 
     closeAssetPicker();
+  };
+
+  const removeSelectedImage = async (targetStep, relativePath) => {
+    const current = selectedStaticAssets[targetStep] || { images: [], video: null };
+    const nextImages = (current.images || []).filter((img) => img.relative_path !== relativePath);
+    const nextUrls = nextImages.map((img) => img.url).filter(Boolean);
+
+    setSelectedStaticAssets((prev) => ({
+      ...prev,
+      [targetStep]: {
+        ...(prev[targetStep] || { images: [], video: null }),
+        images: nextImages,
+      },
+    }));
+
+    if (nextUrls.length > 0) setImageAsset(nextUrls[0]);
+    else if (targetStep === 0 || targetStep === 1) setImageAsset(null);
+
+    // If the preview is currently showing the removed asset, close it.
+    if (previewAsset?.relative_path === relativePath) closePreviewAsset();
+
+    await syncContextSelectionToBackend(targetStep, nextUrls);
   };
 
   const handleGenerate = async (event) => {
     event.preventDefault();
     const promptRequired = composerConfigByStep[step]?.requirePrompt;
     if (promptRequired && !prompt.trim()) return;
+    if (step > 1) return;
+    if (!prompt.trim()) return;
 
     setGenerating(true);
     setGenerateError('');
     try {
+      const requestPayload = {
+        step,
+        prompt,
+        project_slug: project?.slug || null,
+        model,
+        image_asset: imageAsset,
+        video_asset: videoAsset,
+        audio_asset: audioAsset,
+        context_image_urls: promptElements.map((item) => item.url).filter(Boolean),
+        prompt_element_urls: promptElements.map((item) => item.url).filter(Boolean),
+      };
+
+      if (step === 0) {
+        const nb = {
+          num_images: nanoBanana2.num_images,
+          aspect_ratio: nanoBanana2.aspect_ratio,
+          output_format: nanoBanana2.output_format,
+          resolution: nanoBanana2.resolution,
+          enable_web_search: nanoBanana2.enable_web_search,
+        };
+        if (nanoBanana2.thinking_level === 'minimal' || nanoBanana2.thinking_level === 'high') {
+          nb.thinking_level = nanoBanana2.thinking_level;
+        }
+        requestPayload.nano_banana_2 = nb;
+      }
+
+      const response = await fetch(getApiUrl('/api/generalprompt/generate'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestPayload),
+      });
+
+      let responseData = {};
+      try {
+        responseData = await response.json();
+      } catch {
+        /* ignore json parse errors */
+      }
+
+      if (!response.ok) {
+        const detail = typeof responseData?.detail === 'string' ? responseData.detail : `HTTP ${response.status}`;
+        throw new Error(detail);
+      }
+
+      console.log('[TestTab] prompt generated', responseData);
+
       if (step === 0) {
         console.log('[TestTab] generate image', { project: project?.slug, model, prompt });
         setImageAsset('image_ready');
@@ -374,18 +678,37 @@ export default function TestTab() {
         setVideoCandidateUrl(data.video_url);
         setVideoConfirmPending(true);
         setVideoAsset(null);
+        console.log('[TestTab] nano-banana-2 (step 生成图片)', {
+          project: project?.slug,
+          model,
+          seedPromptForNano: responseData.generated_prompt,
+          userPromptForSeed: prompt,
+          imageAsset,
+          nano_banana_image_urls: responseData.nano_banana_image_urls,
+          nano_banana_description: responseData.nano_banana_description,
+        });
+        const outputUrls = Array.isArray(responseData.nano_banana_image_urls)
+          ? responseData.nano_banana_image_urls.filter(Boolean)
+          : [];
+        setStep0GeneratedImageUrls(outputUrls);
+        setImageAsset(outputUrls[0] || 'image_ready');
+      } else if (step === 1) {
+        console.log('[TestTab] generate video (seed only)', { project: project?.slug, model, prompt: responseData.generated_prompt || prompt });
+        setVideoAsset('video_ready');
       } else if (step === 2) {
-        console.log('[TestTab] generate audio', { project: project?.slug, model, prompt });
+        console.log('[TestTab] generate audio', { project: project?.slug, model, prompt: responseData.generated_prompt || prompt });
         setAudioAsset('audio_ready');
-        setStep(3);
       } else {
-        console.log('[TestTab] lipsync', { project: project?.slug, model, prompt, videoAsset, audioAsset });
+        console.log('[TestTab] lipsync', { project: project?.slug, model, prompt: responseData.generated_prompt || prompt, videoAsset, audioAsset });
       }
       if (step !== 1) {
         await new Promise((r) => setTimeout(r, 400));
       }
     } catch (err) {
       setGenerateError(err?.message || '生成失败');
+      await new Promise((r) => setTimeout(r, 400));
+    } catch (err) {
+      window.alert(err.message || '发送失败');
     } finally {
       setGenerating(false);
     }
@@ -434,19 +757,47 @@ export default function TestTab() {
         )}
       </div>
     );
+  const handlePromptKeyDown = (event) => {
+    if (event.key === '@' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      const pos = getCaretTextOffset(promptEditorRef.current);
+      openMentionAssetPicker(pos);
+      return;
+    }
+
+    if (event.key !== 'Enter' || event.isComposing) return;
+
+    // Ctrl+Enter: force newline at caret position
+    if (event.ctrlKey) {
+      event.preventDefault();
+      document.execCommand('insertLineBreak');
+      const editor = promptEditorRef.current;
+      setPrompt(serializePromptFromEditor(editor));
+      return;
+    }
+
+    event.preventDefault();
+    const form = event.currentTarget.closest('form');
+    form?.requestSubmit();
   };
 
-  const renderBottomComposer = (targetStep, placeholder, buttonText, requirePrompt = true) => (
+  const renderBottomComposer = (targetStep, placeholder, buttonText, requirePrompt = true, showPromptTextarea = true) => (
     <div className="border border-white/10 bg-[#141418]/90 backdrop-blur-md rounded-xl p-3">
-      {renderAssetSelector(targetStep)}
       <div className="flex flex-col gap-2">
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          rows={2}
-          className="input-field resize-none text-sm"
-          placeholder={placeholder}
-        />
+        <div className="text-[11px] text-zinc-500">
+          提示：输入 <span className="font-mono text-zinc-400">@</span> 可引用素材库图片（会插入 <span className="font-mono text-zinc-400">图片素材</span>）。
+        </div>
+        {showPromptTextarea ? (
+          <div
+            ref={promptEditorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={() => setPrompt(serializePromptFromEditor(promptEditorRef.current))}
+            onKeyDown={handlePromptKeyDown}
+            data-placeholder={placeholder}
+            className="input-field min-h-[72px] max-h-[180px] overflow-y-auto text-sm whitespace-pre-wrap break-words"
+          />
+        ) : null}
         <button
           type="submit"
           disabled={generating || (requirePrompt && !prompt.trim())}
@@ -473,7 +824,123 @@ export default function TestTab() {
     1: { placeholder: stepOnePlaceholder, buttonText: '生成视频', requirePrompt: true },
     2: { placeholder: '输入音频/配音需求（当前为占位流程）...', buttonText: '生成音频', requirePrompt: true },
     3: { placeholder: '可选：输入口型合成补充说明（当前为占位流程）...', buttonText: '执行口型合成', requirePrompt: false },
+    0: {
+      placeholder: '描述需求（先由 Seed 改写，改写结果将作为 Nano Banana 2 的 prompt）…',
+      buttonText: 'Seed改写并生成图片',
+      requirePrompt: true,
+    },
+    1: { placeholder: 'Describe what video you want（仅 Seed 改写为视频提示词）…', buttonText: 'Generate Video Prompt', requirePrompt: true },
   };
+
+  const renderNanoBanana2ParameterPanel = () => (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="w-[140px]">
+          <label className="block text-xs font-medium text-zinc-400 mb-1.5">num_images</label>
+          <select
+            value={nanoBanana2.num_images}
+            onChange={(e) => setNanoBanana2((p) => ({ ...p, num_images: Number(e.target.value) }))}
+            className="input-field text-sm"
+          >
+            {[1, 2, 3, 4].map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </div>
+        <div className="min-w-[180px] flex-1">
+          <label className="block text-xs font-medium text-zinc-400 mb-1.5">aspect_ratio</label>
+          <select
+            value={nanoBanana2.aspect_ratio}
+            onChange={(e) => setNanoBanana2((p) => ({ ...p, aspect_ratio: e.target.value }))}
+            className="input-field text-sm"
+          >
+            {NANO_BANANA2_ASPECT_RATIOS.map((ar) => (
+              <option key={ar} value={ar}>{ar}</option>
+            ))}
+          </select>
+        </div>
+        <div className="w-[160px]">
+          <label className="block text-xs font-medium text-zinc-400 mb-1.5">output_format</label>
+          <select
+            value={nanoBanana2.output_format}
+            onChange={(e) => setNanoBanana2((p) => ({ ...p, output_format: e.target.value }))}
+            className="input-field text-sm"
+          >
+            <option value="png">png</option>
+            <option value="jpeg">jpeg</option>
+            <option value="webp">webp</option>
+          </select>
+        </div>
+        <div className="w-[140px]">
+          <label className="block text-xs font-medium text-zinc-400 mb-1.5">resolution</label>
+          <select
+            value={nanoBanana2.resolution}
+            onChange={(e) => setNanoBanana2((p) => ({ ...p, resolution: e.target.value }))}
+            className="input-field text-sm"
+          >
+            <option value="0.5K">0.5K</option>
+            <option value="1K">1K</option>
+            <option value="2K">2K</option>
+            <option value="4K">4K</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-300 select-none">
+          <input
+            type="checkbox"
+            checked={nanoBanana2.enable_web_search}
+            onChange={(e) => setNanoBanana2((p) => ({ ...p, enable_web_search: e.target.checked }))}
+            className="rounded border-white/20 bg-white/5"
+          />
+          enable_web_search
+        </label>
+        <div className="w-[220px]">
+          <label className="block text-xs font-medium text-zinc-400 mb-1.5">thinking_level</label>
+          <select
+            value={nanoBanana2.thinking_level}
+            onChange={(e) => setNanoBanana2((p) => ({ ...p, thinking_level: e.target.value }))}
+            className="input-field text-sm w-full"
+          >
+            <option value="">null</option>
+            <option value="minimal">minimal</option>
+            <option value="high">high</option>
+          </select>
+        </div>
+      </div>
+      </div>
+    </div>
+  );
+
+  const renderStep0ResultPreview = () => (
+    <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px]">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h3 className="text-sm font-semibold text-white">结果预览</h3>
+        <span className="text-xs text-zinc-500">输出 {step0GeneratedImageUrls.length} 张</span>
+      </div>
+      {step0GeneratedImageUrls.length === 0 ? (
+        <div className="h-[160px] flex items-center justify-center text-zinc-500 text-sm">
+          暂无生成结果，提交后会在这里展示图片。
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          {step0GeneratedImageUrls.map((url, idx) => (
+            <button
+              key={`${url}-${idx}`}
+              type="button"
+              onClick={() => openPreviewAsset({ name: `output_${idx + 1}`, relative_path: url, url })}
+              className="aspect-square rounded-lg overflow-hidden border border-white/10 bg-black/30 hover:border-violet-400/50 transition-colors"
+              title={`预览第 ${idx + 1} 张`}
+            >
+              <img src={getApiUrl(url)} alt={`output_${idx + 1}`} className="w-full h-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   /* ── 主页：未进入项目 ───────────────────────────────── */
   if (!project) {
@@ -522,31 +989,48 @@ export default function TestTab() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {projectList.map((item) => (
-                  <button
+                  <div
                     key={item.slug}
-                    type="button"
-                    onClick={() => {
-                      setProject({
-                        slug: item.slug,
-                        displayName: item.display_name || item.slug,
-                        relativeDir: item.relative_dir,
-                        videosBaseUrl: item.videos_base_url,
-                      });
-                      resetWizardState();
-                    }}
-                    className="text-left rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
+                    className="rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProject({
+                            slug: item.slug,
+                            displayName: item.display_name || item.slug,
+                            relativeDir: item.relative_dir,
+                            videosBaseUrl: item.videos_base_url,
+                          });
+                          resetWizardState();
+                        }}
+                        className="min-w-0 text-left flex-1"
+                      >
                         <div className="text-sm font-semibold text-zinc-200 truncate">{item.display_name || item.slug}</div>
                         <div className="text-[11px] text-zinc-500 font-mono truncate mt-1">{item.relative_dir}</div>
+                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          disabled={deletingProjectSlug === item.slug}
+                          onClick={() => deleteProject(item)}
+                          className="p-1.5 rounded-lg text-zinc-500 hover:text-red-300 hover:bg-red-500/15 disabled:opacity-50"
+                          title="删除项目"
+                        >
+                          {deletingProjectSlug === item.slug ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={14} />
+                          )}
+                        </button>
+                        <ChevronRight size={15} className="text-zinc-600 mt-0.5" />
                       </div>
-                      <ChevronRight size={15} className="text-zinc-600 shrink-0 mt-0.5" />
                     </div>
                     <div className="text-[11px] text-zinc-600 mt-2">
                       更新时间：{item.mtime ? new Date(item.mtime * 1000).toLocaleString() : '-'}
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -699,7 +1183,7 @@ export default function TestTab() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-white">生成图片</h2>
-                  <p className="text-xs text-zinc-500 mt-1">输入提示词，生成图片素材（占位）。</p>
+                  <p className="text-xs text-zinc-500 mt-1">输入提示词，配置生图参数。</p>
                 </div>
                 <button
                   type="button"
@@ -715,10 +1199,12 @@ export default function TestTab() {
             </div>
 
             {renderModelSelector()}
-
-            <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] flex items-center justify-center text-zinc-500 text-sm">
-              参数配置组件占位区（后续可在此添加参数表单）
+              <div className="mt-4">
+                {renderNanoBanana2ParameterPanel()}
+              </div>
             </div>
+
+            {renderStep0ResultPreview()}
           </div>
         )}
 
@@ -951,6 +1437,17 @@ export default function TestTab() {
               step === 1 ? !videoConfirmPending : composerConfigByStep[step].requirePrompt
             )}
           </form>
+          {step <= 1 && (
+            <form onSubmit={handleGenerate} className="pt-3">
+              {renderBottomComposer(
+                step,
+                composerConfigByStep[step].placeholder,
+                composerConfigByStep[step].buttonText,
+                composerConfigByStep[step].requirePrompt,
+                true
+              )}
+            </form>
+          )}
 
         {showAssetPicker && (
           <div
@@ -964,7 +1461,7 @@ export default function TestTab() {
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <h3 className="text-base font-bold text-white">
-                    选择素材
+                    {isMentionPicker ? '选择图片素材（插入 Elements）' : '选择素材'}
                   </h3>
                   <p className="text-xs text-zinc-500 mt-1">
                     本地静态资源目录：通过服务端配置的 WORKBENCH_ASSETS_ROOT
@@ -975,8 +1472,9 @@ export default function TestTab() {
                 </button>
               </div>
 
+              {!isMentionPicker && (
               <div className="mb-3 flex items-center gap-2">
-                {['image', 'video'].map((kind) => (
+                {['all', 'image', 'video'].map((kind) => (
                   <button
                     key={kind}
                     type="button"
@@ -987,15 +1485,16 @@ export default function TestTab() {
                         : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10'
                     }`}
                   >
-                    {kind === 'image' ? '图片' : '视频'}
+                    {kind === 'all' ? '全部' : kind === 'image' ? '图片' : '视频'}
                   </button>
                 ))}
                 <div className="ml-auto text-[11px] text-zinc-500">
                   已选：
-                  {assetPickerDraft.image ? <span className="text-zinc-300 ml-1">图片</span> : null}
+                  {assetPickerDraft.images?.length ? <span className="text-zinc-300 ml-1">图片 {assetPickerDraft.images.length}</span> : null}
                   {assetPickerDraft.video ? <span className="text-zinc-300 ml-1">视频</span> : null}
                 </div>
               </div>
+              )}
 
               {assetPickerLoading ? (
                 <div className="flex-1 flex items-center justify-center text-zinc-400">
@@ -1006,21 +1505,23 @@ export default function TestTab() {
                 <div className="flex-1 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">{assetPickerError}</div>
               ) : (
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
-                  {assetPickerItems.filter((a) => a.type === assetPickerTab).length === 0 ? (
+                  {assetPickerItems.filter((a) => isMentionPicker ? a.type === 'image' : (assetPickerTab === 'all' || a.type === assetPickerTab)).length === 0 ? (
                     <div className="text-sm text-zinc-500 border border-white/10 bg-white/5 rounded-xl p-4">
-                      未找到可用{assetPickerTab === 'image' ? '图片' : '视频'}素材，请先将文件放到静态素材文件夹。
+                      未找到可用{isMentionPicker ? '图片' : (assetPickerTab === 'all' ? '素材' : assetPickerTab === 'image' ? '图片' : '视频')}，请先将文件放到静态素材目录或 GitHub 仓库。
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                       {assetPickerItems
-                        .filter((asset) => asset.type === assetPickerTab)
+                        .filter((asset) => isMentionPicker ? asset.type === 'image' : (assetPickerTab === 'all' || asset.type === assetPickerTab))
                         .map((asset) => {
-                          const checked = assetPickerDraft[assetPickerTab]?.relative_path === asset.relative_path;
+                          const checked = asset.type === 'image'
+                            ? (assetPickerDraft.images || []).some((item) => item.relative_path === asset.relative_path)
+                            : assetPickerDraft.video?.relative_path === asset.relative_path;
                           return (
                         <button
                           key={asset.relative_path}
                           type="button"
-                          onClick={() => toggleDraftAsset(asset)}
+                          onClick={() => (isMentionPicker ? handleMentionAssetSelect(asset) : toggleDraftAsset(asset))}
                           className={`text-left rounded-xl border transition-colors overflow-hidden ${
                             checked
                               ? 'border-violet-500/40 bg-violet-500/10'
@@ -1051,6 +1552,7 @@ export default function TestTab() {
                 </div>
               )}
 
+              {!isMentionPicker && (
               <div className="mt-3 flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -1064,8 +1566,34 @@ export default function TestTab() {
                   onClick={confirmAssetPicker}
                   className="btn-primary px-4 py-2 text-xs"
                 >
-                  确定并插入上下文
+                  确定
                 </button>
+              </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {previewAsset && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+            onClick={closePreviewAsset}
+          >
+            <div
+              className="bg-[#18181b] border border-white/10 rounded-2xl p-4 w-full max-w-4xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-white truncate">{previewAsset.name}</h3>
+                  <p className="text-[11px] text-zinc-500 truncate">{previewAsset.relative_path}</p>
+                </div>
+                <button type="button" onClick={closePreviewAsset} className="p-1 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="rounded-xl overflow-hidden border border-white/10 bg-black/30 max-h-[70vh] flex items-center justify-center">
+                <img src={getApiUrl(previewAsset.url)} alt={previewAsset.name} className="max-w-full max-h-[70vh] object-contain" />
               </div>
             </div>
           </div>

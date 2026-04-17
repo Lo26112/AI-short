@@ -4,6 +4,11 @@ import asyncio
 import re
 from urllib.parse import quote, unquote
 from dotenv import load_dotenv
+from typing import Optional
+from api_keys import (
+    resolve_upload_post_key,
+    get_upload_post_default_username,
+)
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from workbench_video import router as workbench_video_router
 import httpx
+from generalprompt import router as generalprompt_router
 
 load_dotenv()
 
@@ -38,7 +44,13 @@ os.makedirs(WORKBENCH_PROJECTS_ROOT, exist_ok=True)
 os.makedirs(WORKBENCH_ASSETS_ROOT, exist_ok=True)
 
 # 配置
+# 未设置时使用默认值，性能较高的服务器可适当调大
+MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
 JOB_RETENTION_SECONDS = 3600  # 任务保留时长：1 小时
+
+# 应用运行时状态
+# 通过信号量限制最大并发任务数
+concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
 async def cleanup_jobs():
     """后台清理任务：定期删除过期任务与文件。"""
@@ -52,6 +64,16 @@ async def cleanup_jobs():
             # 基于修改时间做目录清理（OUTPUT_DIR）
             for job_id in os.listdir(OUTPUT_DIR):
                 job_path = os.path.join(OUTPUT_DIR, job_id)
+            # 排除持久化目录：项目与静态素材
+            protected_dirs = {
+                os.path.normpath(WORKBENCH_PROJECTS_ROOT),
+                os.path.normpath(WORKBENCH_ASSETS_ROOT),
+            }
+            for job_id in os.listdir(OUTPUT_DIR):
+                job_path = os.path.join(OUTPUT_DIR, job_id)
+                job_path_norm = os.path.normpath(job_path)
+                if job_path_norm in protected_dirs:
+                    continue
                 if os.path.isdir(job_path) and now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
                     print(f"🧹 Purging old output dir: {job_id}")
                     shutil.rmtree(job_path, ignore_errors=True)
@@ -89,6 +111,9 @@ app.add_middleware(
 # 挂载静态目录：视频文件
 app.mount("/videos", StaticFiles(directory=OUTPUT_DIR), name="videos")
 app.mount("/workbench-assets", StaticFiles(directory=WORKBENCH_ASSETS_ROOT), name="workbench-assets")
+app.include_router(generalprompt_router)
+
+import httpx
 
 def _sanitize_workbench_project_folder_name(name: str) -> str:
     """将用户输入的项目名转为安全的文件夹名（禁止路径穿越与非法字符）。"""
@@ -144,7 +169,7 @@ def _collect_workbench_assets(kind: str, limit: int):
                 "type": asset_type,
                 "name": filename,
                 "relative_path": rel_url_path,
-                "url": f"/workbench-assets/{rel_url_path}",
+                "url": _build_github_asset_url(rel_url_path),
                 "mtime": os.path.getmtime(abs_path),
             })
 
@@ -225,6 +250,7 @@ async def _collect_workbench_assets_from_github_tree_page(kind: str, limit: int)
             html,
         )
     )
+    blob_paths = set(re.findall(r'href="/SuWeiheng200317/AI-shorts_Static_Resources/blob/main/([^"#?]+)"', html))
     for encoded_path in blob_paths:
         rel_url_path = _safe_relpath(unquote(encoded_path))
         filename = os.path.basename(rel_url_path)
@@ -309,6 +335,35 @@ async def workbench_create_project(req: WorkbenchCreateProjectRequest):
     }
 
 
+@app.delete("/api/workbench/projects/{slug}")
+async def workbench_delete_project(slug: str):
+    raw_slug = (slug or "").strip()
+    if not raw_slug:
+        raise HTTPException(status_code=400, detail="Project slug is required")
+
+    try:
+        folder_name = _sanitize_workbench_project_folder_name(raw_slug)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project slug")
+
+    project_dir = os.path.normpath(os.path.join(WORKBENCH_PROJECTS_ROOT, folder_name))
+    root_norm = os.path.normpath(WORKBENCH_PROJECTS_ROOT)
+    if not project_dir.startswith(root_norm):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not os.path.exists(project_dir):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not os.path.isdir(project_dir):
+        raise HTTPException(status_code=409, detail="Target is not a project directory")
+
+    try:
+        shutil.rmtree(project_dir)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete project: {e}")
+
+    return {"ok": True, "deleted_slug": folder_name}
+
+
 @app.get("/api/workbench/static-assets")
 async def workbench_static_assets(kind: str = "all", limit: int = 100):
     allowed = {"all", "image", "video"}
@@ -329,4 +384,73 @@ async def workbench_static_assets(kind: str = "all", limit: int = 100):
         print(f"⚠️ GitHub assets fetch failed, fallback to local assets: {e}")
         assets = _collect_workbench_assets(kind, safe_limit)
     return {"assets": assets}
+    try:
+        assets = await _collect_workbench_assets_from_github_tree_page(kind, safe_limit)
+        if not assets:
+            print("⚠️ GitHub tree page returned no assets, fallback to local assets")
+            assets = _collect_workbench_assets(kind, safe_limit)
+    except Exception as e:
+        # Final fallback to local directory scan if GitHub page parsing is unavailable.
+        print(f"⚠️ GitHub tree page parse failed, fallback to local assets: {e}")
+        assets = _collect_workbench_assets(kind, safe_limit)
+    return {"assets": assets}
+@app.get("/api/social/user")
+async def get_social_user(
+    x_upload_post_key: Optional[str] = Header(None, alias="X-Upload-Post-Key"),
+):
+    """代理 Upload-Post 用户信息接口，返回可用账号（密钥来自服务端配置，可选请求头覆盖用于调试）。"""
+    api_key = resolve_upload_post_key(x_upload_post_key)
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing API key: upload_post_api_key (set UPLOAD_POST_API_KEY or config/api_keys.local.json, or X-Upload-Post-Key for debug)",
+        )
+
+    url = "https://api.upload-post.com/api/uploadposts/users"
+    print(f"🔍 Fetching User ID from: {url}")
+    headers = {"Authorization": f"Apikey {api_key}"}
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                print(f"❌ Upload-Post User Fetch Error: {resp.text}")
+                raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch user: {resp.text}")
+            
+            data = resp.json()
+            print(f"🔍 Upload-Post User Response: {data}")
+            
+            user_id = None
+            # 返回结构通常为 {'success': True, 'profiles': [{'username': '...'}, ...]}
+            profiles_list = []
+            if isinstance(data, dict):
+                 raw_profiles = data.get('profiles', [])
+                 if isinstance(raw_profiles, list):
+                     for p in raw_profiles:
+                         username = p.get('username')
+                         if username:
+                             # 提取已连接的平台
+                             socials = p.get('social_accounts', {})
+                             connected = []
+                             # 检查常见平台
+                             for platform in ['tiktok', 'instagram', 'youtube']:
+                                 account_info = socials.get(platform)
+                                 # 若为有效对象则视为已连接
+                                 if isinstance(account_info, dict):
+                                     connected.append(platform)
+                             
+                             profiles_list.append({
+                                 "username": username,
+                                 "connected": connected
+                             })
+            
+            default_username = get_upload_post_default_username()
+            if not profiles_list:
+                return {"profiles": [], "error": "No profiles found", "default_username": default_username}
+
+            return {"profiles": profiles_list, "default_username": default_username}
+            
+            
+        except Exception as e:
+             raise HTTPException(status_code=500, detail=str(e))
 

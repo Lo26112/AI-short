@@ -1,8 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Globe, Sparkles } from 'lucide-react';
 import TestTab from './components/TestTab';
 
 function App() {
+  // 清理旧版浏览器存储的密钥（现由服务端 config 提供）
+  useEffect(() => {
+    try {
+      localStorage.removeItem('gemini_key');
+      localStorage.removeItem('uploadPostKey_v3');
+      localStorage.removeItem('elevenLabsKey_v1');
+      localStorage.removeItem('falKey_v1');
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const [activeTab, setActiveTab] = useState('test');
 
   const Sidebar = () => (
@@ -66,8 +78,8 @@ function App() {
         <div className="h-8 border-t border-white/5 flex items-center justify-center shrink-0">
           <span className="text-[10px] text-zinc-600">
             Made with ❤️ by{' '}
-            <a href="https://www.kolforge.ai" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-white transition-colors">
-              KOLForge
+            <a href="https://www.upload-post.com" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-white transition-colors">
+              Upload-Post
             </a>
           </span>
         </div>
