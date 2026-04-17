@@ -17,6 +17,20 @@
   @apply w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all text-sm placeholder:text-zinc-500;
 }
 
+/* Make native <select> dropdown readable in dark UI */
+select.input-field {
+  color-scheme: dark;
+}
+
+select.input-field option {
+  background-color: #0b1220; /* dark slate */
+  color: #e5e7eb; /* zinc-200 */
+}
+
+select.input-field option:checked,
+select.input-field option:hover,
+select.input-field option:focus {
+  background-color: #111c30;
 /* Keep native select dropdown options readable on dark theme */
 .input-field option {
   background: #18181b;

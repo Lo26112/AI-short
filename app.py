@@ -14,6 +14,8 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from workbench_video import router as workbench_video_router
+import httpx
 from generalprompt import router as generalprompt_router
 
 load_dotenv()
@@ -60,6 +62,8 @@ async def cleanup_jobs():
             now = time.time()
             
             # 基于修改时间做目录清理（OUTPUT_DIR）
+            for job_id in os.listdir(OUTPUT_DIR):
+                job_path = os.path.join(OUTPUT_DIR, job_id)
             # 排除持久化目录：项目与静态素材
             protected_dirs = {
                 os.path.normpath(WORKBENCH_PROJECTS_ROOT),
@@ -93,6 +97,7 @@ async def lifespan(app: FastAPI):
     # 关闭阶段（如有需要可在此取消后台协程）
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(workbench_video_router)
 
 # 为前端启用 CORS
 app.add_middleware(
@@ -109,7 +114,6 @@ app.mount("/workbench-assets", StaticFiles(directory=WORKBENCH_ASSETS_ROOT), nam
 app.include_router(generalprompt_router)
 
 import httpx
-
 
 def _sanitize_workbench_project_folder_name(name: str) -> str:
     """将用户输入的项目名转为安全的文件夹名（禁止路径穿越与非法字符）。"""
@@ -184,6 +188,7 @@ async def _collect_workbench_assets_from_github(kind: str, limit: int):
     }
     if GITHUB_TOKEN:
         headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.get(WORKBENCH_GITHUB_REPO_API_TREE_URL, headers=headers)
         resp.raise_for_status()
@@ -239,6 +244,12 @@ async def _collect_workbench_assets_from_github_tree_page(kind: str, limit: int)
 
     # Fallback parser for root-level files from GitHub tree page.
     # Example href: /SuWeiheng200317/AI-shorts_Static_Resources/blob/main/222.png
+    blob_paths = set(
+        re.findall(
+            r'href="/SuWeiheng200317/AI-shorts_Static_Resources/blob/main/([^"#?]+)"',
+            html,
+        )
+    )
     blob_paths = set(re.findall(r'href="/SuWeiheng200317/AI-shorts_Static_Resources/blob/main/([^"#?]+)"', html))
     for encoded_path in blob_paths:
         rel_url_path = _safe_relpath(unquote(encoded_path))
@@ -359,6 +370,20 @@ async def workbench_static_assets(kind: str = "all", limit: int = 100):
     if kind not in allowed:
         raise HTTPException(status_code=400, detail=f"kind must be one of: {', '.join(sorted(allowed))}")
     safe_limit = max(1, min(limit, 500))
+    assets = _collect_workbench_assets(kind, safe_limit)
+    try:
+        # Prefer GitHub tree page parsing (works without token and is fast for simple repos).
+        assets = await _collect_workbench_assets_from_github_tree_page(kind, safe_limit)
+        if not assets:
+            assets = await _collect_workbench_assets_from_github(kind, safe_limit)
+        if not assets:
+            print("⚠️ GitHub returned no assets, fallback to local assets")
+            assets = _collect_workbench_assets(kind, safe_limit)
+    except Exception as e:
+        # Final fallback to local directory scan if GitHub is unavailable.
+        print(f"⚠️ GitHub assets fetch failed, fallback to local assets: {e}")
+        assets = _collect_workbench_assets(kind, safe_limit)
+    return {"assets": assets}
     try:
         assets = await _collect_workbench_assets_from_github_tree_page(kind, safe_limit)
         if not assets:

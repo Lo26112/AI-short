@@ -4,6 +4,8 @@ boto3
 
 fastapi
 uvicorn
+httpx
+fal-client
 python-multipart
 httpx
 beautifulsoup4

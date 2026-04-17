@@ -10,10 +10,13 @@ export default defineConfig({
       'kolforge.ai',
       'www.kolforge.ai'
     ],
+    // Kling 等任务常需 60s+，默认代理可能提前断开，拉长等待时间（毫秒）
     proxy: {
       '/api': {
         target: 'http://backend:8000',
         changeOrigin: true,
+        timeout: 600000,
+        proxyTimeout: 600000,
       },
       '/static-assets': {
         target: 'http://backend:8000',

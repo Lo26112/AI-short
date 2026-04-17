@@ -14,6 +14,13 @@ function sanitizeWorkbenchProjectFolderName(name) {
   return safe;
 }
 
+async function parseJsonSafe(res) {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
 const NANO_BANANA2_ASPECT_RATIOS = [
   'auto', '21:9', '16:9', '3:2', '4:3', '5:4', '1:1', '4:5', '3:4', '2:3', '9:16', '4:1', '1:4', '8:1', '1:8',
 ];
@@ -59,6 +66,14 @@ export default function TestTab() {
   const [imageAsset, setImageAsset] = useState(null);
   const [videoAsset, setVideoAsset] = useState(null);
   const [audioAsset, setAudioAsset] = useState(null);
+  const [videoCandidateUrl, setVideoCandidateUrl] = useState('');
+  const [videoConfirmPending, setVideoConfirmPending] = useState(false);
+  const [generateError, setGenerateError] = useState('');
+  const [videoGenMode, setVideoGenMode] = useState('image'); // image | text
+  const [videoDuration, setVideoDuration] = useState('5');
+  const [videoGenerateAudio, setVideoGenerateAudio] = useState(false);
+  const [videoAspectRatio, setVideoAspectRatio] = useState('16:9');
+  const [wanFps, setWanFps] = useState(16);
   const [selectedStaticAssets, setSelectedStaticAssets] = useState({
     0: { images: [], video: null },
     1: { images: [], video: null },
@@ -87,7 +102,7 @@ export default function TestTab() {
     setProjectListError('');
     try {
       const res = await fetch(getApiUrl('/api/workbench/projects?limit=300'));
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) {
         const detail = typeof data?.detail === 'string' ? data.detail : '加载项目列表失败';
         throw new Error(detail);
@@ -103,6 +118,68 @@ export default function TestTab() {
   useEffect(() => {
     if (!project) fetchProjectList();
   }, [project, fetchProjectList]);
+
+  const modelCopy = useMemo(() => {
+    if (model === 'low') {
+      return {
+        title: 'Low',
+        badge: 'fast / cheaper',
+        badgeClasses: 'text-green-400 bg-green-500/10',
+        desc: 'Lower cost / faster generation. Good for quick iterations.',
+      };
+    }
+    return {
+      title: 'High',
+      badge: 'best quality',
+      badgeClasses: 'text-violet-400 bg-violet-500/10',
+      desc: 'Higher quality / higher cost. Best results for final outputs.',
+    };
+  }, [model]);
+
+  const renderModelSelector = useCallback(() => {
+    return (
+      <div>
+        <label className="block text-sm font-medium text-zinc-300 mb-3">Model</label>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setModel('low')}
+            className={`p-4 rounded-xl border text-left transition-all ${
+              model === 'low'
+                ? 'border-green-500/50 bg-green-500/10 ring-1 ring-green-500/30'
+                : 'border-white/10 bg-white/5 hover:bg-white/10'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-sm font-semibold ${model === 'low' ? 'text-green-300' : 'text-zinc-300'}`}>Low</span>
+            </div>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">Lower cost / faster generation.</p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setModel('high')}
+            className={`p-4 rounded-xl border text-left transition-all ${
+              model === 'high'
+                ? 'border-violet-500/50 bg-violet-500/10 ring-1 ring-violet-500/30'
+                : 'border-white/10 bg-white/5 hover:bg-white/10'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-sm font-semibold ${model === 'high' ? 'text-violet-300' : 'text-zinc-300'}`}>High</span>
+            </div>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">Best quality / higher cost.</p>
+          </button>
+        </div>
+
+        <div className="mt-3 text-xs text-zinc-500">
+          Selected: <span className="text-zinc-300 font-semibold">{modelCopy.title}</span>{' '}
+          <span className={`ml-2 px-2 py-0.5 rounded-full border border-white/10 ${modelCopy.badgeClasses}`}>{modelCopy.badge}</span>
+          <div className="mt-1 text-[11px] text-zinc-600">{modelCopy.desc}</div>
+        </div>
+      </div>
+    );
+  }, [model, modelCopy]);
 
   const steps = [
     { id: 0, title: '生成图片' },
@@ -120,6 +197,13 @@ export default function TestTab() {
     setImageAsset(null);
     setVideoAsset(null);
     setAudioAsset(null);
+    setVideoCandidateUrl('');
+    setVideoConfirmPending(false);
+    setGenerateError('');
+    setVideoGenMode('image');
+    setVideoDuration('5');
+    setVideoGenerateAudio(false);
+    setVideoAspectRatio('16:9');
     setSelectedStaticAssets({
       0: { images: [], video: null },
       1: { images: [], video: null },
@@ -201,11 +285,7 @@ export default function TestTab() {
         body: JSON.stringify({ name }),
       });
       let data = {};
-      try {
-        data = await res.json();
-      } catch {
-        /* ignore */
-      }
+      data = await parseJsonSafe(res);
       if (!res.ok) {
         const msg = typeof data.detail === 'string' ? data.detail : Array.isArray(data.detail) ? data.detail[0]?.msg : data.detail;
         throw new Error(msg || `HTTP ${res.status}`);
@@ -235,7 +315,7 @@ export default function TestTab() {
     setAssetPickerItems([]);
     try {
       const res = await fetch(getApiUrl('/api/workbench/static-assets?kind=all&limit=300'));
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok) {
         const detail = typeof data?.detail === 'string' ? data.detail : '加载素材失败';
         throw new Error(detail);
@@ -483,10 +563,13 @@ export default function TestTab() {
 
   const handleGenerate = async (event) => {
     event.preventDefault();
+    const promptRequired = composerConfigByStep[step]?.requirePrompt;
+    if (promptRequired && !prompt.trim()) return;
     if (step > 1) return;
     if (!prompt.trim()) return;
 
     setGenerating(true);
+    setGenerateError('');
     try {
       const requestPayload = {
         step,
@@ -535,6 +618,66 @@ export default function TestTab() {
       console.log('[TestTab] prompt generated', responseData);
 
       if (step === 0) {
+        console.log('[TestTab] generate image', { project: project?.slug, model, prompt });
+        setImageAsset('image_ready');
+        setVideoCandidateUrl('');
+        setVideoConfirmPending(false);
+        setStep(1);
+      } else if (step === 1) {
+        const useWan = model === 'low';
+        let endpoint = useWan ? '/api/workbench/wan/text-to-video' : '/api/workbench/kling/text-to-video';
+        let body = useWan
+          ? {
+              prompt: prompt.trim(),
+              duration: videoDuration,
+              aspect_ratio: videoAspectRatio,
+              frames_per_second: wanFps,
+            }
+          : {
+              prompt: prompt.trim(),
+              duration: videoDuration,
+              generate_audio: videoGenerateAudio,
+              aspect_ratio: videoAspectRatio,
+            };
+
+        if (videoGenMode === 'image') {
+          const startImageUrl = selectedStaticAssets[1]?.image?.url || selectedStaticAssets[0]?.image?.url;
+          if (!startImageUrl) {
+            throw new Error('图生视频模式下，阶段二需要先选择图片素材（image）。');
+          }
+          const absoluteImageUrl = startImageUrl.startsWith('http') ? startImageUrl : getApiUrl(startImageUrl);
+          endpoint = useWan ? '/api/workbench/wan/image-to-video' : '/api/workbench/kling/image-to-video';
+          body = useWan
+            ? {
+                image_url: absoluteImageUrl,
+                prompt: prompt.trim(),
+                duration: videoDuration,
+                frames_per_second: wanFps,
+              }
+            : {
+                start_image_url: absoluteImageUrl,
+                prompt: prompt.trim(),
+                duration: videoDuration,
+                generate_audio: videoGenerateAudio,
+              };
+        }
+
+        const res = await fetch(getApiUrl(endpoint), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await parseJsonSafe(res);
+        if (!res.ok) {
+          const detail = typeof data?.detail === 'string' ? data.detail : '视频生成失败';
+          throw new Error(detail);
+        }
+        if (!data?.video_url) {
+          throw new Error('Kling 返回缺少 video_url');
+        }
+        setVideoCandidateUrl(data.video_url);
+        setVideoConfirmPending(true);
+        setVideoAsset(null);
         console.log('[TestTab] nano-banana-2 (step 生成图片)', {
           project: project?.slug,
           model,
@@ -558,6 +701,11 @@ export default function TestTab() {
       } else {
         console.log('[TestTab] lipsync', { project: project?.slug, model, prompt: responseData.generated_prompt || prompt, videoAsset, audioAsset });
       }
+      if (step !== 1) {
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } catch (err) {
+      setGenerateError(err?.message || '生成失败');
       await new Promise((r) => setTimeout(r, 400));
     } catch (err) {
       window.alert(err.message || '发送失败');
@@ -566,6 +714,49 @@ export default function TestTab() {
     }
   };
 
+  const confirmStageTwoVideo = () => {
+    if (!videoCandidateUrl) return;
+    setVideoAsset(videoCandidateUrl);
+    setVideoConfirmPending(false);
+    setStep(2);
+  };
+
+  const rejectStageTwoVideo = () => {
+    setVideoCandidateUrl('');
+    setVideoConfirmPending(false);
+    setVideoAsset(null);
+  };
+
+  const stepOnePlaceholder = videoGenMode === 'image'
+    ? '输入图生视频提示词（必填），并确保已选择图片素材...'
+    : '输入文生视频提示词（必填）...';
+
+  const renderAssetSelector = (targetStep) => {
+    const picked = selectedStaticAssets[targetStep] || { image: null, video: null };
+    return (
+      <div className="mb-2">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <label className="block text-sm font-medium text-zinc-300">提示词与素材</label>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openAssetPicker(targetStep)}
+              className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10 text-xs flex items-center gap-1"
+              title="选择素材"
+            >
+              <CheckSquare size={13} />
+              选择素材
+            </button>
+          </div>
+        </div>
+        {(picked.image || picked.video) && (
+          <div className="mb-2 text-[11px] text-zinc-500 space-y-1">
+            {picked.image && <div>图片素材：<span className="text-zinc-300">{picked.image.name}</span></div>}
+            {picked.video && <div>视频素材：<span className="text-zinc-300">{picked.video.name}</span></div>}
+          </div>
+        )}
+      </div>
+    );
   const handlePromptKeyDown = (event) => {
     if (event.key === '@' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
@@ -629,6 +820,10 @@ export default function TestTab() {
   );
 
   const composerConfigByStep = {
+    0: { placeholder: '输入你想生成的图片描述（当前为占位流程）...', buttonText: '生成图片', requirePrompt: true },
+    1: { placeholder: stepOnePlaceholder, buttonText: '生成视频', requirePrompt: true },
+    2: { placeholder: '输入音频/配音需求（当前为占位流程）...', buttonText: '生成音频', requirePrompt: true },
+    3: { placeholder: '可选：输入口型合成补充说明（当前为占位流程）...', buttonText: '执行口型合成', requirePrompt: false },
     0: {
       placeholder: '描述需求（先由 Seed 改写，改写结果将作为 Nano Banana 2 的 prompt）…',
       buttonText: 'Seed改写并生成图片',
@@ -1001,6 +1196,9 @@ export default function TestTab() {
                   已有素材跳过此阶段
                 </button>
               </div>
+            </div>
+
+            {renderModelSelector()}
               <div className="mt-4">
                 {renderNanoBanana2ParameterPanel()}
               </div>
@@ -1016,9 +1214,123 @@ export default function TestTab() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-white">生成视频</h2>
-                  <p className="text-xs text-zinc-500 mt-1">基于图片素材生成视频（占位）。</p>
+                  <div className="mt-4">{renderModelSelector()}</div>
                   <div className="mt-3 text-xs text-zinc-400">
-                    Image asset: <span className="text-zinc-200 font-mono">{String(imageAsset || 'none')}</span>
+                    当前模式：
+                    <span className="text-zinc-200 font-semibold ml-1">{videoGenMode === 'image' ? '图生视频' : '文生视频'}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-400">
+                    图片素材：
+                    <span className="text-zinc-200 font-mono ml-1">{String(imageAsset || 'none')}</span>
+                    {videoGenMode === 'text' && <span className="text-zinc-500 ml-2">（文生模式可不选）</span>}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVideoGenMode('image')}
+                      className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                        videoGenMode === 'image'
+                          ? 'border-violet-500/40 bg-violet-500/10 text-violet-300'
+                          : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10'
+                      }`}
+                    >
+                      图生视频
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVideoGenMode('text')}
+                      className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                        videoGenMode === 'text'
+                          ? 'border-violet-500/40 bg-violet-500/10 text-violet-300'
+                          : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10'
+                      }`}
+                    >
+                      文生视频
+                    </button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs text-zinc-400 mb-1">duration</label>
+                      <select
+                        value={videoDuration}
+                        onChange={(e) => setVideoDuration(e.target.value)}
+                        className="input-field text-sm"
+                      >
+                        {['3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'].map((v) => (
+                          <option key={v} value={v}>{v}s</option>
+                        ))}
+                      </select>
+                      <div className="mt-1 text-[10px] text-zinc-600 min-h-[14px]">
+                        <span className="opacity-0">placeholder</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-zinc-400 mb-1">generate_audio</label>
+                      <select
+                        value={videoGenerateAudio ? 'true' : 'false'}
+                        onChange={(e) => setVideoGenerateAudio(e.target.value === 'true')}
+                        className="input-field text-sm"
+                        disabled={model === 'low'}
+                      >
+                        <option value="false">false</option>
+                        <option value="true">true</option>
+                      </select>
+                      <div className="mt-1 text-[10px] text-zinc-600 min-h-[14px]">
+                        <span className="opacity-0">placeholder</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-zinc-400 mb-1">aspect_ratio</label>
+                      <select
+                        value={videoAspectRatio}
+                        onChange={(e) => setVideoAspectRatio(e.target.value)}
+                        className="input-field text-sm"
+                        disabled={videoGenMode === 'image'}
+                      >
+                        {['16:9', '9:16', '1:1'].map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                      <div className="mt-1 text-[10px] text-zinc-600 min-h-[14px]">
+                        <span className={videoGenMode === 'image' ? '' : 'opacity-0'}>
+                          图生模式不生效
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs text-zinc-400">每秒帧数</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={4}
+                          max={60}
+                          step={1}
+                          value={wanFps}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            if (Number.isFinite(v)) setWanFps(Math.max(4, Math.min(60, Math.round(v))));
+                          }}
+                          className="w-20 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-sm text-zinc-200 outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50"
+                          disabled={model !== 'low'}
+                        />
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min={4}
+                      max={60}
+                      step={1}
+                      value={wanFps}
+                      onChange={(e) => setWanFps(Number(e.target.value))}
+                      className={`w-full accent-violet-500 ${model !== 'low' ? 'opacity-40 cursor-not-allowed' : ''}`}
+                      disabled={model !== 'low'}
+                    />
+                    <div className="mt-1 text-[10px] text-zinc-600 min-h-[14px]">
+                      <span className={model === 'low' ? '' : 'opacity-0'}>仅 WAN 生效（4–60）</span>
+                    </div>
                   </div>
                 </div>
                 <button
@@ -1035,7 +1347,30 @@ export default function TestTab() {
             </div>
 
             <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] flex items-center justify-center text-zinc-500 text-sm">
-              参数配置组件占位区（后续可在此添加参数表单）
+              {videoConfirmPending && videoCandidateUrl ? (
+                <div className="w-full max-w-3xl">
+                  <div className="text-sm text-zinc-300 mb-3">{model === 'low' ? 'WAN v2.2-a14b' : 'Kling v3'} 已生成候选视频，请确认：</div>
+                  <video src={videoCandidateUrl} controls className="w-full rounded-xl border border-white/10 bg-black/40" />
+                  <div className="mt-4 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={rejectStageTwoVideo}
+                      className="btn-secondary px-4 py-2 text-xs"
+                    >
+                      不确定，返回修改
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmStageTwoVideo}
+                      className="btn-primary px-4 py-2 text-xs"
+                    >
+                      确定，进入阶段三
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>参数配置组件占位区（后续可在此添加参数表单）</div>
+              )}
             </div>
           </div>
         )}
@@ -1089,6 +1424,19 @@ export default function TestTab() {
         )}
           </div>
 
+          <form onSubmit={handleGenerate} className="pt-3">
+            {generateError && (
+              <div className="mb-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                {generateError}
+              </div>
+            )}
+            {renderBottomComposer(
+              step,
+              composerConfigByStep[step].placeholder,
+              composerConfigByStep[step].buttonText,
+              step === 1 ? !videoConfirmPending : composerConfigByStep[step].requirePrompt
+            )}
+          </form>
           {step <= 1 && (
             <form onSubmit={handleGenerate} className="pt-3">
               {renderBottomComposer(
