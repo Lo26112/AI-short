@@ -1,0 +1,10 @@
+google-genai
+python-dotenv
+boto3
+
+fastapi
+uvicorn
+python-multipart
+httpx
+beautifulsoup4
+fal-client

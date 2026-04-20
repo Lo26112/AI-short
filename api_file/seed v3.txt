@@ -1,0 +1,195 @@
+
+## API Information
+
+This model can be used via our HTTP API or more conveniently via our client libraries.
+See the input and output schema below, as well as the usage examples.
+
+
+### Input Schema
+
+The API accepts the following input parameters:
+
+
+- **`prompt`** (`string`, _required_):
+  The text prompt or question for the model.
+  - Examples: "What can you do?"
+
+- **`image_urls`** (`list<string>`, _optional_):
+  URLs of images for visual understanding. Supported formats: JPEG, PNG, WebP. A maximum of 6 images is supported. Any additional images will be ignored.
+  - Array of string
+
+- **`video_urls`** (`list<string>`, _optional_):
+  URLs of videos for video understanding. Supported formats: MP4, MOV. Audio comprehension is not supported. A maximum of 3 videos is supported. Any additional videos will be ignored.
+  - Array of string
+
+- **`system_prompt`** (`string`, _optional_):
+  Optional system prompt to guide the model's behavior.
+
+- **`messages`** (`list<Seed2MiniMessage>`, _optional_):
+  Optional prior conversation history for multi-turn conversations. Pass back the `messages` field from a previous response to provide context. The current `prompt`, `image_urls`, `video_urls`, and `system_prompt` are always appended as the latest user turn.
+  - Array of Seed2MiniMessage
+  - Examples: []
+
+- **`thinking`** (`ThinkingEnum`, _optional_):
+  Controls the model's chain-of-thought reasoning. `enabled` always includes reasoning, `disabled` never includes reasoning, `auto` lets the model decide based on the query. Default value: `"enabled"`
+  - Default: `"enabled"`
+  - Options: `"enabled"`, `"disabled"`, `"auto"`
+
+- **`reasoning_effort`** (`Enum`, _optional_):
+  Controls the depth of reasoning before the model responds. Only applicable when `thinking` is `enabled` or `auto`. `minimal` for immediate response, `low` for faster response with light reasoning, `medium` for balanced speed and depth, `high` for deep analysis of complex issues.
+  - Options: `"minimal"`, `"low"`, `"medium"`, `"high"`
+
+- **`max_completion_tokens`** (`integer`, _optional_):
+  Controls the maximum length of the model's output, including both the model's response and its chain-of-thought content, measured in tokens. Default value: `4096`
+  - Default: `4096`
+  - Range: `1` to `65536`
+
+- **`temperature`** (`float`, _optional_):
+  Controls randomness in the response. Lower values make output more focused and deterministic, higher values make it more creative. Default value: `1`
+  - Default: `1`
+  - Range: `0` to `2`
+
+- **`top_p`** (`float`, _optional_):
+  Nucleus sampling parameter. The model considers tokens with top_p cumulative probability mass. Lower values narrow the token selection. Default value: `0.7`
+  - Default: `0.7`
+  - Range: `0` to `1`
+
+
+
+**Required Parameters Example**:
+
+```json
+{
+  "prompt": "What can you do?"
+}
+```
+
+**Full Example**:
+
+```json
+{
+  "prompt": "What can you do?",
+  "messages": [],
+  "thinking": "enabled",
+  "max_completion_tokens": 4096,
+  "temperature": 1,
+  "top_p": 0.7
+}
+```
+
+
+### Output Schema
+
+The API returns the following output format:
+
+- **`output`** (`string`, _required_):
+  The model's text response.
+
+- **`reasoning_content`** (`string`, _optional_):
+  The model's chain-of-thought reasoning content. Only present when `thinking` is `enabled` or `auto`.
+
+- **`messages`** (`list<Seed2MiniMessage>`, _required_):
+  The full conversation history including the model's response. Pass this back as the `messages` input field to continue the conversation.
+  - Array of Seed2MiniMessage
+
+
+
+**Example Response**:
+
+```json
+{
+  "output": "",
+  "messages": [
+    {
+      "role": "system"
+    }
+  ]
+}
+```
+
+
+## Usage Examples
+
+### cURL
+
+```bash
+curl --request POST \
+  --url https://fal.run/fal-ai/bytedance/seed/v2/mini \
+  --header "Authorization: Key $FAL_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{
+     "prompt": "What can you do?"
+   }'
+```
+
+### Python
+
+Ensure you have the Python client installed:
+
+```bash
+pip install fal-client
+```
+
+Then use the API client to make requests:
+
+```python
+import fal_client
+
+def on_queue_update(update):
+    if isinstance(update, fal_client.InProgress):
+        for log in update.logs:
+           print(log["message"])
+
+result = fal_client.subscribe(
+    "fal-ai/bytedance/seed/v2/mini",
+    arguments={
+        "prompt": "What can you do?"
+    },
+    with_logs=True,
+    on_queue_update=on_queue_update,
+)
+print(result)
+```
+
+### JavaScript
+
+Ensure you have the JavaScript client installed:
+
+```bash
+npm install --save @fal-ai/client
+```
+
+Then use the API client to make requests:
+
+```javascript
+import { fal } from "@fal-ai/client";
+
+const result = await fal.subscribe("fal-ai/bytedance/seed/v2/mini", {
+  input: {
+    prompt: "What can you do?"
+  },
+  logs: true,
+  onQueueUpdate: (update) => {
+    if (update.status === "IN_PROGRESS") {
+      update.logs.map((log) => log.message).forEach(console.log);
+    }
+  },
+});
+console.log(result.data);
+console.log(result.requestId);
+```
+
+
+## Additional Resources
+
+### Documentation
+
+- [Model Playground](https://fal.ai/models/fal-ai/bytedance/seed/v2/mini)
+- [API Documentation](https://fal.ai/models/fal-ai/bytedance/seed/v2/mini/api)
+- [OpenAPI Schema](https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/bytedance/seed/v2/mini)
+
+### fal.ai Platform
+
+- [Platform Documentation](https://docs.fal.ai)
+- [Python Client](https://docs.fal.ai/clients/python)
+- [JavaScript Client](https://docs.fal.ai/clients/javascript)
