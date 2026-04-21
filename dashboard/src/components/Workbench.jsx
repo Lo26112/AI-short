@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Bookmark, ChevronLeft, ChevronRight, FolderPlus, Loader2, Sparkles, Trash2, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { NANO_BANANA2_DEFAULTS, PictureStepConfig, PictureStepResult } from './picture';
@@ -31,6 +31,13 @@ const ELEMENT_BADGE_COLORS = [
   { bg: 'rgba(244, 63, 94, 0.2)', border: 'rgba(244, 63, 94, 0.55)', text: '#fecdd3' }, // rose
 ];
 
+const WORKBENCH_STEPS = [
+  { id: 0, title: '生成圖片' },
+  { id: 1, title: '生成影片' },
+  { id: 2, title: '生成音訊' },
+  { id: 3, title: '對口型' },
+];
+
 export default function Workbench() {
   const [project, setProject] = useState(null);
   // { slug, displayName, relativeDir, videosBaseUrl }
@@ -49,7 +56,7 @@ export default function Workbench() {
 
   const [model] = useState('low'); // 'low' | 'high'
   const [prompt, setPrompt] = useState('');
-  const [generating, setGenerating] = useState(false);
+  const [stepGenerating, setStepGenerating] = useState({ 0: false, 1: false });
 
   const [imageAsset, setImageAsset] = useState(null);
   const [videoAsset, setVideoAsset] = useState(null);
@@ -83,6 +90,7 @@ export default function Workbench() {
   const [mentionInsertPos, setMentionInsertPos] = useState(null);
   const [previewAsset, setPreviewAsset] = useState(null);
   const promptEditorRef = useRef(null);
+  const prevStepRef = useRef(0);
 
   /** fal-ai/nano-banana-2 (step 0) — user-facing fields; server merges the rest. */
   const [nanoBanana2, setNanoBanana2] = useState({ ...NANO_BANANA2_DEFAULTS });
@@ -110,18 +118,33 @@ export default function Workbench() {
     if (!project) fetchProjectList();
   }, [project, fetchProjectList]);
 
-  const steps = [
-    { id: 0, title: '生成圖片' },
-    { id: 1, title: '生成影片' },
-    { id: 2, title: '生成音訊' },
-    { id: 3, title: '對口型' },
-  ];
+  const updateStep = useCallback((next) => {
+    setStep((current) => {
+      const resolved = typeof next === 'function' ? next(current) : next;
+      const clamped = Math.max(0, Math.min(3, resolved));
+      return clamped === current ? current : clamped;
+    });
+  }, []);
+  const goBack = useCallback(() => updateStep((s) => s - 1), [updateStep]);
+  const goNext = useCallback(() => updateStep((s) => s + 1), [updateStep]);
 
-  const goBack = () => setStep((s) => Math.max(0, s - 1));
-  const goNext = () => setStep((s) => Math.min(3, s + 1));
+  useEffect(() => {
+    const prev = prevStepRef.current;
+    // Enforce isolation between Step 0(生成圖片) and Step 1(生成影片):
+    // no shared @ image references or image asset carry-over.
+    const switchedBetweenImageAndVideo =
+      (prev === 0 && step === 1) || (prev === 1 && step === 0);
+    if (switchedBetweenImageAndVideo) {
+      setPrompt((p) => p.replace(/Elements\[\d+\]/g, '').trim());
+      setPromptElements([]);
+      setImageAsset(null);
+    }
+    prevStepRef.current = step;
+  }, [step]);
 
   const resetWizardState = () => {
     setStep(0);
+    setStepGenerating({ 0: false, 1: false });
     setPrompt('');
     setImageAsset(null);
     setVideoAsset(null);
@@ -285,32 +308,6 @@ export default function Workbench() {
     setMentionInsertPos(null);
   };
 
-  const syncContextSelectionToBackend = async (targetStep, urls) => {
-    try {
-      const response = await fetch(getApiUrl('/api/generalprompt/context-selection'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          step: targetStep,
-          project_slug: project?.slug || null,
-          context_image_urls: urls,
-        }),
-      });
-      if (!response.ok) {
-        let responseData = {};
-        try {
-          responseData = await response.json();
-        } catch {
-          /* ignore json parse errors */
-        }
-        const detail = typeof responseData?.detail === 'string' ? responseData.detail : `HTTP ${response.status}`;
-        throw new Error(detail);
-      }
-    } catch (err) {
-      console.error('[Workbench] syncContextSelectionToBackend failed', err);
-    }
-  };
-
   const openPreviewAsset = (asset) => {
     setPreviewAsset(asset || null);
   };
@@ -318,6 +315,12 @@ export default function Workbench() {
   const closePreviewAsset = () => {
     setPreviewAsset(null);
   };
+
+  const filteredAssetPickerItems = useMemo(() => {
+    return assetPickerItems.filter((asset) => (
+      isMentionPicker ? asset.type === 'image' : (assetPickerTab === 'all' || asset.type === assetPickerTab)
+    ));
+  }, [assetPickerItems, isMentionPicker, assetPickerTab]);
 
   const serializePromptFromEditor = (root) => {
     if (!root) return '';
@@ -414,7 +417,6 @@ export default function Workbench() {
       .filter((item) => item.index !== removeIndex)
       .map((item, idx) => ({ ...item, index: idx }));
     setPromptElements(nextElements);
-    await syncContextSelectionToBackend(step, nextElements.map((item) => item.url));
   };
 
   const handleMentionAssetSelect = async (asset) => {
@@ -433,7 +435,6 @@ export default function Workbench() {
       },
     ];
     setPromptElements(nextElements);
-    await syncContextSelectionToBackend(step, nextElements.map((item) => item.url));
     closeAssetPicker();
   };
 
@@ -474,11 +475,6 @@ export default function Workbench() {
     if (nextSelected.images.length > 0) setImageAsset(nextSelected.images[0].url);
     if (nextSelected.video) setVideoAsset(nextSelected.video.url);
 
-    await syncContextSelectionToBackend(
-      assetPickerStep,
-      nextSelected.images.map((asset) => asset.url).filter(Boolean),
-    );
-
     closeAssetPicker();
   };
 
@@ -501,7 +497,6 @@ export default function Workbench() {
     // If the preview is currently showing the removed asset, close it.
     if (previewAsset?.relative_path === relativePath) closePreviewAsset();
 
-    await syncContextSelectionToBackend(targetStep, nextUrls);
   };
 
   const runSeedGeneration = async (targetStep) => {
@@ -510,10 +505,9 @@ export default function Workbench() {
       prompt,
       project_slug: project?.slug || null,
       model,
-      image_asset: imageAsset,
+      image_asset: null,
       video_asset: videoAsset,
       audio_asset: audioAsset,
-      context_image_urls: promptElements.map((item) => item.url).filter(Boolean),
       prompt_element_urls: promptElements.map((item) => item.url).filter(Boolean),
     };
     if (targetStep === 0) {
@@ -564,22 +558,18 @@ export default function Workbench() {
     const promptElementUrls = Array.isArray(seedData?.prompt_element_urls)
       ? seedData.prompt_element_urls.filter(Boolean)
       : [];
-    const contextImageUrls = Array.isArray(seedData?.context_image_urls)
-      ? seedData.context_image_urls.filter(Boolean)
-      : [];
-    const firstElementImage = promptElementUrls[0] || contextImageUrls[0] || null;
+    const firstElementImage = promptElementUrls[0] || null;
     const provider = videoProvider;
     const mode = videoMode;
     const commonBody = {
       prompt: seedPrompt,
-      context_image_urls: contextImageUrls,
       prompt_element_urls: promptElementUrls,
     };
 
     if (provider === 'kling') {
       if (mode === 'image') {
-        const startImage = String(imageAsset || firstElementImage || '').trim();
-        if (!startImage) throw new Error('請透過 @ 選擇至少一張圖片素材，或先完成上一步生成圖片');
+        const startImage = String(firstElementImage || '').trim();
+        if (!startImage) throw new Error('請先在輸入框使用 @ 選擇至少一張圖片素材');
         return {
           endpoint: '/api/workbench/kling/image-to-video',
           body: {
@@ -603,8 +593,8 @@ export default function Workbench() {
 
     const fps = Number.isFinite(Number(wanFps)) ? Number(wanFps) : 16;
     if (mode === 'image') {
-      const img = String(imageAsset || firstElementImage || '').trim();
-      if (!img) throw new Error('請透過 @ 選擇至少一張圖片素材，或先完成上一步生成圖片');
+      const img = String(firstElementImage || '').trim();
+      if (!img) throw new Error('請先在輸入框使用 @ 選擇至少一張圖片素材');
       return {
         endpoint: '/api/workbench/wan/image-to-video',
         body: {
@@ -657,16 +647,18 @@ export default function Workbench() {
     event.preventDefault();
     if (step > 1) return;
     if (!prompt.trim()) return;
+    const targetStep = step;
+    if (stepGenerating[targetStep]) return;
 
-    setGenerating(true);
+    setStepGenerating((prev) => ({ ...prev, [targetStep]: true }));
     try {
-      if (step === 0) await handleImageGenerationFlow();
-      if (step === 1) await handleVideoGenerationFlow();
+      if (targetStep === 0) await handleImageGenerationFlow();
+      if (targetStep === 1) await handleVideoGenerationFlow();
       await new Promise((r) => setTimeout(r, 300));
     } catch (err) {
       window.alert(err.message || '發送失敗');
     } finally {
-      setGenerating(false);
+      setStepGenerating((prev) => ({ ...prev, [targetStep]: false }));
     }
   };
 
@@ -728,7 +720,12 @@ export default function Workbench() {
             suppressContentEditableWarning
             onInput={() => {
               const el = promptEditorRef.current;
-              setPrompt(serializePromptFromEditor(el));
+              const nextPrompt = serializePromptFromEditor(el);
+              setPrompt(nextPrompt);
+              if (!nextPrompt.trim()) {
+                // Input box fully cleared: reset referenced @ assets as well.
+                setPromptElements([]);
+              }
               requestAnimationFrame(() => resizePromptEditor());
             }}
             onKeyDown={handlePromptKeyDown}
@@ -740,10 +737,10 @@ export default function Workbench() {
         ) : null}
         <button
           type="submit"
-          disabled={generating || (requirePrompt && !prompt.trim())}
+          disabled={stepGenerating[targetStep] || (requirePrompt && !prompt.trim())}
           className="btn-primary w-full py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          {generating ? (
+          {stepGenerating[targetStep] ? (
             <>
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               Processing...
@@ -944,15 +941,15 @@ export default function Workbench() {
             </div>
 
             <div className="mt-5 space-y-2">
-              {steps.map((s, idx) => {
+              {WORKBENCH_STEPS.map((s, idx) => {
                 const active = s.id === step;
                 const done = s.id < step;
                 return (
                   <button
                     key={s.id}
                     type="button"
-                    onClick={() => setStep(s.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl border text-left transition-all ${
+                    onClick={() => updateStep(s.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl border text-left ${
                       active
                         ? 'border-violet-500/40 bg-violet-500/10 text-violet-300'
                         : done
@@ -1008,7 +1005,7 @@ export default function Workbench() {
                       setNanoBanana2={setNanoBanana2}
                       onSkipToVideo={() => {
                         setImageAsset('provided');
-                        setStep(1);
+                        updateStep(1);
                       }}
                     />
                   )}
@@ -1033,7 +1030,7 @@ export default function Workbench() {
                       imageAsset={imageAsset}
                       onSkipToAudio={() => {
                         setVideoAsset('provided');
-                        setStep(2);
+                        updateStep(2);
                       }}
                     />
                   )}
@@ -1046,10 +1043,15 @@ export default function Workbench() {
                     <PictureStepResult
                       step0GeneratedImageUrls={step0GeneratedImageUrls}
                       onPreviewOutput={openPreviewAsset}
+                      isGenerating={stepGenerating[0]}
                     />
                   )}
                   {step === 1 && (
-                    <VideoStepResult videoAsset={videoAsset} videoResultUrl={videoResultUrl} />
+                    <VideoStepResult
+                      videoAsset={videoAsset}
+                      videoResultUrl={videoResultUrl}
+                      isGenerating={stepGenerating[1]}
+                    />
                   )}
                 </div>
               </section>
@@ -1141,15 +1143,13 @@ export default function Workbench() {
                 <div className="flex-1 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">{assetPickerError}</div>
               ) : (
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
-                  {assetPickerItems.filter((a) => isMentionPicker ? a.type === 'image' : (assetPickerTab === 'all' || a.type === assetPickerTab)).length === 0 ? (
+                  {filteredAssetPickerItems.length === 0 ? (
                     <div className="text-sm text-zinc-500 border border-white/10 bg-white/5 rounded-xl p-4">
                       未找到可用{isMentionPicker ? '圖片' : (assetPickerTab === 'all' ? '素材' : assetPickerTab === 'image' ? '圖片' : '影片')}，請先將檔案放到靜態素材目錄或 GitHub 倉庫。
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                      {assetPickerItems
-                        .filter((asset) => isMentionPicker ? asset.type === 'image' : (assetPickerTab === 'all' || asset.type === assetPickerTab))
-                        .map((asset) => {
+                      {filteredAssetPickerItems.map((asset) => {
                           const checked = asset.type === 'image'
                             ? (assetPickerDraft.images || []).some((item) => item.relative_path === asset.relative_path)
                             : assetPickerDraft.video?.relative_path === asset.relative_path;

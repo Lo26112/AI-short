@@ -97,7 +97,6 @@ async def run_nano_banana_image_pipeline(
     fal_key: str,
     *,
     prompt_element_urls: list[str],
-    context_image_urls: list[str],
     nano_banana_2: Optional[NanoBanana2UserInput],
     seed_prompt: str,
 ) -> tuple[list[str], Optional[str]]:
@@ -106,8 +105,10 @@ async def run_nano_banana_image_pipeline(
     Returns (output image URLs, optional description).
     """
     try:
+        # Always initialize per-request locals at the beginning of each call.
+        request_body: dict[str, Any] = {}
         ordered_element_urls = [u for u in (prompt_element_urls or []) if isinstance(u, str) and u.strip()]
-        image_urls = (ordered_element_urls or context_image_urls or [])[:6]
+        image_urls = ordered_element_urls[:6]
         use_edit = len(image_urls) > 0
         endpoint = NANO_BANANA_2_EDIT_URL if use_edit else NANO_BANANA_2_URL
         if use_edit:
@@ -150,4 +151,3 @@ async def run_nano_banana_image_pipeline(
     finally:
         # request-scoped cleanup: avoid accidental reuse in chained calls
         prompt_element_urls.clear()
-        context_image_urls.clear()

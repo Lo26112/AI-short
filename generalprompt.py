@@ -10,10 +10,6 @@ from Workbench_picture import NanoBanana2UserInput, run_nano_banana_image_pipeli
 
 router = APIRouter(prefix="/api/generalprompt", tags=["generalprompt"])
 
-# In-memory state for currently selected context images per (project_slug, step).
-# This is only for debugging / log tracing in a single server process.
-_CONTEXT_IMAGE_URLS_BY_KEY: dict[str, list[str]] = {}
-
 
 STEP_LABELS = {
     0: "image",
@@ -70,16 +66,8 @@ class GeneralPromptRequest(BaseModel):
     image_asset: Optional[str] = None
     video_asset: Optional[str] = None
     audio_asset: Optional[str] = None
-    context_image_urls: list[str] = Field(default_factory=list)
     prompt_element_urls: list[str] = Field(default_factory=list)
     nano_banana_2: Optional[NanoBanana2UserInput] = None
-
-
-class ContextSelectionRequest(BaseModel):
-    step: int
-    project_slug: Optional[str] = None
-    context_image_urls: list[str] = Field(default_factory=list)
-
 
 class GeneralPromptResponse(BaseModel):
     ok: bool
@@ -88,65 +76,18 @@ class GeneralPromptResponse(BaseModel):
     received_prompt: str
     generated_prompt: str
     project_slug: Optional[str] = None
-    context_image_urls: Optional[list[str]] = None
     prompt_element_urls: Optional[list[str]] = None
     nano_banana_description: Optional[str] = None
     nano_banana_image_urls: Optional[list[str]] = None
 
-
-def _context_selection_key(project_slug: Optional[str], step: int) -> str:
-    return f"{project_slug or 'default'}|step={step}"
-
-
-def _clear_context_selection_state(project_slug: Optional[str], step: int) -> None:
-    key = _context_selection_key(project_slug, step)
-    _CONTEXT_IMAGE_URLS_BY_KEY.pop(key, None)
-
-
-@router.post("/context-selection")
-async def receive_context_selection(req: ContextSelectionRequest):
-    key = _context_selection_key(req.project_slug, req.step)
-    urls = req.context_image_urls or []
-    _CONTEXT_IMAGE_URLS_BY_KEY[key] = urls
-
-    print("context_selection:", req.model_dump())
-    if urls:
-        print("context_image_urls:", urls)
-    print("context_selection_state:", {k: v for k, v in _CONTEXT_IMAGE_URLS_BY_KEY.items()})
-    return {
-        "ok": True,
-        "step": req.step,
-        "project_slug": req.project_slug,
-        "context_image_count": len(req.context_image_urls),
-    }
-
-
-def _image_asset_url_for_seed(ia: str) -> Optional[str]:
-    """Skip UI placeholders; only pass plausible asset/HTTP URLs to Seed."""
-    s = (ia or "").strip()
-    if not s or len(s) < 4:
-        return None
-    low = s.lower()
-    if low in ("provided", "none", "null"):
-        return None
-    return s
-
-
 def _merge_image_urls_for_seed(req: GeneralPromptRequest) -> list[str]:
-    """Collect up to 6 image URLs for Seed multimodal (prompt_element_urls, then context, then image_asset)."""
+    """Collect up to 6 image URLs for Seed multimodal from @ prompt elements only."""
     out: list[str] = []
     seen: set[str] = set()
     for u in req.prompt_element_urls or []:
         if isinstance(u, str) and (s := u.strip()) and s not in seen:
             seen.add(s)
             out.append(s)
-    for u in req.context_image_urls or []:
-        if isinstance(u, str) and (s := u.strip()) and s not in seen:
-            seen.add(s)
-            out.append(s)
-    ia = _image_asset_url_for_seed(req.image_asset or "")
-    if ia and ia not in seen:
-        out.append(ia)
     return out[:6]
 
 
@@ -196,7 +137,6 @@ async def generate_general_prompt(
     req: GeneralPromptRequest,
     x_fal_key: Optional[str] = Header(None, alias="X-Fal-Key"),
 ):
-    target_step = req.step
     raw_prompt = (req.prompt or "").strip()
     if not raw_prompt:
         raise HTTPException(status_code=400, detail="Prompt is required")
@@ -213,8 +153,6 @@ async def generate_general_prompt(
 
     step_name = STEP_LABELS[req.step]
     print("received:", req.model_dump())
-    if req.context_image_urls:
-        print("context_image_urls:", req.context_image_urls)
     if req.prompt_element_urls:
         print("prompt_element_urls:", req.prompt_element_urls)
 
@@ -230,7 +168,6 @@ async def generate_general_prompt(
                     client,
                     fal_key,
                     prompt_element_urls=req.prompt_element_urls or [],
-                    context_image_urls=req.context_image_urls or [],
                     nano_banana_2=req.nano_banana_2,
                     seed_prompt=seed_prompt,
                 )
@@ -238,9 +175,6 @@ async def generate_general_prompt(
             raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Step 0 (image) pipeline failed: {e}")
-        finally:
-            # One-shot context for this request: clear persisted selection state after generation.
-            _clear_context_selection_state(req.project_slug, target_step)
 
         return GeneralPromptResponse(
             ok=True,
@@ -249,7 +183,6 @@ async def generate_general_prompt(
             received_prompt=raw_prompt,
             generated_prompt=seed_prompt,
             project_slug=req.project_slug,
-            context_image_urls=req.context_image_urls or None,
             prompt_element_urls=req.prompt_element_urls or None,
             nano_banana_description=description,
             nano_banana_image_urls=image_urls_out or None,
@@ -264,9 +197,6 @@ async def generate_general_prompt(
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Seed request failed: {e}")
-    finally:
-        # One-shot context for this request: clear persisted selection state after generation.
-        _clear_context_selection_state(req.project_slug, target_step)
 
     print("seed_output:", generated_prompt)
 
@@ -277,6 +207,5 @@ async def generate_general_prompt(
         received_prompt=raw_prompt,
         generated_prompt=generated_prompt,
         project_slug=req.project_slug,
-        context_image_urls=req.context_image_urls or None,
         prompt_element_urls=req.prompt_element_urls or None,
     )

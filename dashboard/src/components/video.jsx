@@ -55,7 +55,7 @@ export function VideoStepConfig({
                   key={opt.id}
                   type="button"
                   onClick={() => setVideoProvider(opt.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                  className={`px-3 py-1.5 rounded-lg text-xs border ${
                     videoProvider === opt.id
                       ? 'border-violet-500/40 bg-violet-500/10 text-violet-300'
                       : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10'
@@ -78,7 +78,7 @@ export function VideoStepConfig({
                   key={opt.id}
                   type="button"
                   onClick={() => setVideoMode(opt.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                  className={`px-3 py-1.5 rounded-lg text-xs border ${
                     videoMode === opt.id
                       ? 'border-violet-500/40 bg-violet-500/10 text-violet-300'
                       : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10'
@@ -192,9 +192,9 @@ export function VideoStepConfig({
 }
 
 /** 右側列：影片結果預覽 */
-export function VideoStepResult({ videoAsset, videoResultUrl }) {
+export function VideoStepResult({ videoAsset, videoResultUrl, isGenerating = false }) {
   return (
-    <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] h-full min-h-0 flex flex-col">
+    <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] h-full min-h-0 flex flex-col relative">
       <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
         <h3 className="text-sm font-semibold text-white">影片結果</h3>
       </div>
@@ -209,6 +209,12 @@ export function VideoStepResult({ videoAsset, videoResultUrl }) {
           </div>
         </div>
       )}
+      {isGenerating ? (
+        <div className="absolute inset-0 z-10 bg-black/35 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3 rounded-[inherit]">
+          <span className="h-8 w-8 rounded-full border-2 border-white/25 border-t-violet-400 animate-spin" />
+          <span className="text-sm text-zinc-200">生成中...</span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -236,7 +242,11 @@ export default function VideoStep(props) {
         imageAsset={props.imageAsset}
         onSkipToAudio={props.onSkipToAudio}
       />
-      <VideoStepResult videoAsset={props.videoAsset} videoResultUrl={props.videoResultUrl} />
+      <VideoStepResult
+        videoAsset={props.videoAsset}
+        videoResultUrl={props.videoResultUrl}
+        isGenerating={props.isGenerating}
+      />
     </div>
   );
 }
