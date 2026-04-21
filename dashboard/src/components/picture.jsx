@@ -126,11 +126,11 @@ export function PictureStepConfig({
 }
 
 /** 右側：結果預覽 */
-export function PictureStepResult({ step0GeneratedImageUrls, onPreviewOutput }) {
+export function PictureStepResult({ step0GeneratedImageUrls, onPreviewOutput, isGenerating = false }) {
   const count = step0GeneratedImageUrls.length;
   const cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
   return (
-    <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] h-full min-h-0 flex flex-col">
+    <div className="glass-panel p-6 border border-dashed border-white/15 min-h-[220px] h-full min-h-0 flex flex-col relative">
       <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
         <h3 className="text-sm font-semibold text-white">結果預覽</h3>
         <span className="text-xs text-zinc-500">輸出 {step0GeneratedImageUrls.length} 張</span>
@@ -172,6 +172,12 @@ export function PictureStepResult({ step0GeneratedImageUrls, onPreviewOutput }) 
           ))}
         </div>
       )}
+      {isGenerating ? (
+        <div className="absolute inset-0 z-10 bg-black/35 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3 rounded-[inherit]">
+          <span className="h-8 w-8 rounded-full border-2 border-white/25 border-t-violet-400 animate-spin" />
+          <span className="text-sm text-zinc-200">生成中...</span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -188,6 +194,7 @@ export default function PictureStep(props) {
       <PictureStepResult
         step0GeneratedImageUrls={props.step0GeneratedImageUrls}
         onPreviewOutput={props.onPreviewOutput}
+        isGenerating={props.isGenerating}
       />
     </div>
   );

@@ -92,22 +92,55 @@ def _extract_video_url_from_fal(data: Any) -> Optional[str]:
     return None
 
 
+def _fal_arguments_for_log(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """日志用参数副本：超长 data URI 截断，避免打印整段 base64。"""
+    out: Dict[str, Any] = {}
+    for k, v in arguments.items():
+        if k in ("start_image_url", "image_url") and isinstance(v, str) and v.startswith("data:"):
+            n = len(v)
+            out[k] = (v[:80] + f"...<data uri truncated, {n} chars>") if n > 120 else v
+        else:
+            out[k] = v
+    return out
+
+
 def _subscribe_fal(model_id: str, arguments: Dict[str, Any], fal_key: str) -> Dict[str, Any]:
     """同步调用 fal 队列 API（subscribe），避免 httpx 长连接被服务端断开。"""
+    safe_args = _fal_arguments_for_log(arguments)
+    try:
+        print(
+            "fal_subscribe_request:",
+            model_id,
+            json.dumps(safe_args, ensure_ascii=False, default=str),
+        )
+    except (TypeError, ValueError):
+        print("fal_subscribe_request:", model_id, safe_args)
+
     old = os.environ.get("FAL_KEY")
     try:
         with _fal_subscribe_lock:
             os.environ["FAL_KEY"] = fal_key
-            return fal_client.subscribe(
-                model_id,
-                arguments=arguments,
-                client_timeout=900.0,
-            )
+            try:
+                data = fal_client.subscribe(
+                    model_id,
+                    arguments=arguments,
+                    client_timeout=900.0,
+                )
+            except Exception as e:
+                print("fal_subscribe_error:", model_id, str(e))
+                raise
     finally:
         if old is None:
             os.environ.pop("FAL_KEY", None)
         else:
             os.environ["FAL_KEY"] = old
+
+    try:
+        print("fal_subscribe_response:\n" + json.dumps(data, ensure_ascii=False, indent=2, default=str))
+    except (TypeError, ValueError):
+        print("fal_subscribe_response:", data)
+
+    return data
 
 
 def _wan_num_frames_from_duration(duration: Optional[str], frames_per_second: int) -> int:
@@ -131,7 +164,6 @@ class WorkbenchKlingImageToVideoRequest(BaseModel):
     prompt: str
     duration: Optional[str] = "5"
     generate_audio: Optional[bool] = False
-    context_image_urls: Optional[list[str]] = None
     prompt_element_urls: Optional[list[str]] = None
 
 
@@ -165,7 +197,6 @@ async def workbench_kling_image_to_video(
         start_image_url_raw = _pick_first_context_image(
             req.start_image_url,
             req.prompt_element_urls,
-            req.context_image_urls,
         )
         start_image_url = _to_kling_start_image(start_image_url_raw)
 
@@ -266,33 +297,26 @@ class WorkbenchWanImageToVideoRequest(BaseModel):
     aspect_ratio: Optional[str] = "auto"  # auto | 16:9 | 9:16 | 1:1
     negative_prompt: Optional[str] = ""
     resolution: Optional[str] = "720p"  # 480p | 580p | 720p
-    context_image_urls: Optional[list[str]] = None
     prompt_element_urls: Optional[list[str]] = None
 
 
 def _pick_first_context_image(
     explicit_image_url: Optional[str],
     prompt_element_urls: Optional[list[str]],
-    context_image_urls: Optional[list[str]],
 ) -> str:
-    # 参考 generalprompt / Workbench_picture：优先 prompt_element_urls，其次 context_image_urls，最后显式字段。
+    # 仅基于 @ 引入的 prompt_element_urls；无则回退显式字段。
     ordered_element_urls = [
         u.strip() for u in (prompt_element_urls or []) if isinstance(u, str) and u.strip()
     ]
-    context_urls = [u.strip() for u in (context_image_urls or []) if isinstance(u, str) and u.strip()]
     if ordered_element_urls:
         return ordered_element_urls[0]
-    if context_urls:
-        return context_urls[0]
     return (explicit_image_url or "").strip()
 
 
 def _clear_request_context_lists(req: Any) -> None:
-    """Best-effort cleanup for request-scoped context image lists after each call."""
+    """Best-effort cleanup for request-scoped prompt element lists after each call."""
     if isinstance(getattr(req, "prompt_element_urls", None), list):
         req.prompt_element_urls.clear()
-    if isinstance(getattr(req, "context_image_urls", None), list):
-        req.context_image_urls.clear()
 
 
 class WorkbenchWanTextToVideoRequest(BaseModel):
@@ -324,7 +348,6 @@ async def workbench_wan_image_to_video(
         image_url = _pick_first_context_image(
             req.image_url,
             req.prompt_element_urls,
-            req.context_image_urls,
         )
         if not image_url:
             raise HTTPException(status_code=400, detail="image_url is required")
