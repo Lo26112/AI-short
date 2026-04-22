@@ -71,6 +71,11 @@ export default function Workbench() {
   const [step5Generating, setStep5Generating] = useState(false);
   const [step5ResultUrl, setStep5ResultUrl] = useState('');
   const [step5Logs, setStep5Logs] = useState([]);
+  const [lipsyncVideoUrl, setLipsyncVideoUrl] = useState('');
+  const [lipsyncAudioUrl, setLipsyncAudioUrl] = useState('');
+  const [lipsyncSyncMode, setLipsyncSyncMode] = useState('cut_off');
+  const [lipsyncResultUrl, setLipsyncResultUrl] = useState('');
+  const [lipsyncGenerating, setLipsyncGenerating] = useState(false);
 
   // Step 1 (生成影片) parameters
   const [videoProvider, setVideoProvider] = useState('kling'); // kling | wan
@@ -180,6 +185,11 @@ export default function Workbench() {
     setStep5Generating(false);
     setStep5ResultUrl('');
     setStep5Logs([]);
+    setLipsyncVideoUrl('');
+    setLipsyncAudioUrl('');
+    setLipsyncSyncMode('cut_off');
+    setLipsyncResultUrl('');
+    setLipsyncGenerating(false);
   };
 
   const leaveProject = () => {
@@ -816,6 +826,48 @@ export default function Workbench() {
     }
   };
 
+  const handleLipsyncGenerate = async () => {
+    const videoUrl = String(lipsyncVideoUrl || '').trim();
+    const audioUrl = String(lipsyncAudioUrl || '').trim();
+    if (!videoUrl) throw new Error('请输入 video_url');
+    if (!audioUrl) throw new Error('请输入 audio_url');
+
+    setLipsyncGenerating(true);
+    try {
+      const response = await fetch(getApiUrl('/api/workbench/lipsync/generate'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video_url: videoUrl,
+          audio_url: audioUrl,
+          sync_mode: String(lipsyncSyncMode || 'cut_off'),
+        }),
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch {
+        /* ignore */
+      }
+      if (!response.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : `HTTP ${response.status}`;
+        throw new Error(detail);
+      }
+      const out = String(data?.video_url || '').trim();
+      if (!out) throw new Error('后端未返回 video_url');
+      setLipsyncResultUrl(out);
+    } finally {
+      setLipsyncGenerating(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!lipsyncVideoUrl && videoAsset) setLipsyncVideoUrl(String(videoAsset));
+  }, [videoAsset, lipsyncVideoUrl]);
+
+  useEffect(() => {
+    if (!lipsyncAudioUrl && audioAsset) setLipsyncAudioUrl(String(audioAsset));
+  }, [audioAsset, lipsyncAudioUrl]);
   const handleGenerate = async (event) => {
     event.preventDefault();
     if (step > 1) return;
@@ -1273,7 +1325,25 @@ export default function Workbench() {
                   />
                 )}
                 {step === 3 && (
-                  <LipsyncStep videoAsset={videoAsset} audioAsset={audioAsset} />
+                  <LipsyncStep
+                    videoAsset={videoAsset}
+                    audioAsset={audioAsset}
+                    lipsyncVideoUrl={lipsyncVideoUrl}
+                    setLipsyncVideoUrl={setLipsyncVideoUrl}
+                    lipsyncAudioUrl={lipsyncAudioUrl}
+                    setLipsyncAudioUrl={setLipsyncAudioUrl}
+                    lipsyncSyncMode={lipsyncSyncMode}
+                    setLipsyncSyncMode={setLipsyncSyncMode}
+                    lipsyncResultUrl={lipsyncResultUrl}
+                    lipsyncGenerating={lipsyncGenerating}
+                    onGenerate={async () => {
+                      try {
+                        await handleLipsyncGenerate();
+                      } catch (err) {
+                        window.alert(err.message || '對口型失敗');
+                      }
+                    }}
+                  />
                 )}
                 {step === 4 && (
                   <Step5FaceEdit
