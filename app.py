@@ -19,6 +19,7 @@ from workbench_video import router as workbench_video_router
 from workbench_rudio import router as workbench_rudio_router
 from workbench_step5 import router as workbench_step5_router
 from workbench_video_understanding import router as workbench_video_understanding_router
+from workbench_lipsync import router as workbench_lipsync_router
 
 load_dotenv()
 
@@ -115,6 +116,7 @@ app.include_router(workbench_video_router)
 app.include_router(workbench_rudio_router)
 app.include_router(workbench_step5_router)
 app.include_router(workbench_video_understanding_router)
+app.include_router(workbench_lipsync_router)
 
 import httpx
 
@@ -150,6 +152,7 @@ def _build_github_asset_url(rel_url_path: str) -> str:
 def _collect_workbench_assets(kind: str, limit: int):
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
     video_exts = {".mp4", ".mov", ".webm", ".mkv"}
+    audio_exts = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg"}
 
     items = []
     for root, _, files in os.walk(WORKBENCH_ASSETS_ROOT):
@@ -160,6 +163,8 @@ def _collect_workbench_assets(kind: str, limit: int):
                 asset_type = "image"
             elif ext in video_exts:
                 asset_type = "video"
+            elif ext in audio_exts:
+                asset_type = "audio"
             else:
                 continue
 
@@ -184,6 +189,7 @@ def _collect_workbench_assets(kind: str, limit: int):
 async def _collect_workbench_assets_from_github(kind: str, limit: int):
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
     video_exts = {".mp4", ".mov", ".webm", ".mkv"}
+    audio_exts = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg"}
     items = []
 
     headers = {
@@ -212,6 +218,8 @@ async def _collect_workbench_assets_from_github(kind: str, limit: int):
             asset_type = "image"
         elif ext in video_exts:
             asset_type = "video"
+        elif ext in audio_exts:
+            asset_type = "audio"
         else:
             continue
 
@@ -235,6 +243,7 @@ async def _collect_workbench_assets_from_github(kind: str, limit: int):
 async def _collect_workbench_assets_from_github_tree_page(kind: str, limit: int):
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
     video_exts = {".mp4", ".mov", ".webm", ".mkv"}
+    audio_exts = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg"}
     items = []
 
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -257,6 +266,8 @@ async def _collect_workbench_assets_from_github_tree_page(kind: str, limit: int)
             asset_type = "image"
         elif ext in video_exts:
             asset_type = "video"
+        elif ext in audio_exts:
+            asset_type = "audio"
         else:
             continue
         if kind != "all" and kind != asset_type:
@@ -363,7 +374,7 @@ async def workbench_delete_project(slug: str):
 
 @app.get("/api/workbench/static-assets")
 async def workbench_static_assets(kind: str = "all", limit: int = 100):
-    allowed = {"all", "image", "video"}
+    allowed = {"all", "image", "video", "audio"}
     if kind not in allowed:
         raise HTTPException(status_code=400, detail=f"kind must be one of: {', '.join(sorted(allowed))}")
     safe_limit = max(1, min(limit, 500))

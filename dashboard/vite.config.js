@@ -7,6 +7,7 @@ export default defineConfig({
   server: {
     allowedHosts: [
       '192.168.0.7',
+      '192.168.1.188',
       'kolforge.ai',
       'www.kolforge.ai'
     ],
