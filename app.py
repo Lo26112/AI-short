@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from generalprompt import router as generalprompt_router
 from workbench_video import router as workbench_video_router
+from workbench_rudio import router as workbench_rudio_router
 from workbench_step5 import router as workbench_step5_router
 
 load_dotenv()
@@ -110,6 +111,7 @@ app.mount("/videos", StaticFiles(directory=OUTPUT_DIR), name="videos")
 app.mount("/workbench-assets", StaticFiles(directory=WORKBENCH_ASSETS_ROOT), name="workbench-assets")
 app.include_router(generalprompt_router)
 app.include_router(workbench_video_router)
+app.include_router(workbench_rudio_router)
 app.include_router(workbench_step5_router)
 
 import httpx

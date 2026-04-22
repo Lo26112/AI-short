@@ -1263,6 +1263,9 @@ export default function Workbench() {
               <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 min-h-0">
                 {step === 2 && (
                   <AudioStep
+                    onAudioReady={(url) => {
+                      if (url) setAudioAsset(url);
+                    }}
                     onSkipToLipsync={() => {
                       setAudioAsset('provided');
                       setStep(3);
