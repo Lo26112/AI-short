@@ -278,7 +278,7 @@ export default function Workbench() {
 
   const openAssetPicker = async (targetStep) => {
     setAssetPickerStep(targetStep);
-    setAssetPickerTab('all');
+    setAssetPickerTab(targetStep === 5 ? 'video' : 'all');
     setAssetPickerDraft(selectedStaticAssets[targetStep] || { images: [], video: null });
     setShowAssetPicker(true);
     setAssetPickerLoading(true);
