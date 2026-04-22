@@ -37,7 +37,6 @@ const WORKBENCH_STEPS = [
   { id: 1, title: '生成影片' },
   { id: 2, title: '生成音訊' },
   { id: 3, title: '對口型' },
-  { id: 4, title: '人脸替换' },
 ];
 
 export default function Workbench() {
@@ -1215,6 +1214,7 @@ export default function Workbench() {
                     <VideoStepConfig
                       videoProvider={videoProvider}
                       setVideoProvider={setVideoProvider}
+                      onGoToFaceEdit={() => updateStep(4)}
                       videoMode={videoMode}
                       setVideoMode={setVideoMode}
                       videoDuration={videoDuration}
@@ -1274,6 +1274,7 @@ export default function Workbench() {
                 )}
                 {step === 4 && (
                   <Step5FaceEdit
+                    onBack={() => updateStep(1)}
                     prompt={step5Prompt}
                     promptEditorRef={step5PromptEditorRef}
                     onPromptInput={handleStep5PromptInput}

@@ -4,6 +4,7 @@ import React from 'react';
 export function VideoStepConfig({
   videoProvider,
   setVideoProvider,
+  onGoToFaceEdit,
   videoMode,
   setVideoMode,
   videoDuration,
@@ -46,7 +47,8 @@ export function VideoStepConfig({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-xl border border-white/10 bg-white/5 p-4">
             <div className="text-xs font-semibold text-zinc-300 mb-2">影片模型</div>
-            <div className="flex flex-wrap gap-2">
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
               {[
                 { id: 'kling', label: 'High' },
                 { id: 'wan', label: 'Low' },
@@ -55,7 +57,7 @@ export function VideoStepConfig({
                   key={opt.id}
                   type="button"
                   onClick={() => setVideoProvider(opt.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs border ${
+                  className={`w-full min-h-[36px] px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
                     videoProvider === opt.id
                       ? 'border-violet-500/40 bg-violet-500/10 text-violet-300'
                       : 'border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10'
@@ -64,6 +66,14 @@ export function VideoStepConfig({
                   {opt.label}
                 </button>
               ))}
+              </div>
+              <button
+                type="button"
+                onClick={onGoToFaceEdit}
+                className="w-full min-h-[38px] px-3 py-2 rounded-lg text-xs font-medium border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10 transition-colors"
+              >
+                人脸替换
+              </button>
             </div>
           </div>
 
