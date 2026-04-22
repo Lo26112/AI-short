@@ -5,6 +5,7 @@ import { NANO_BANANA2_DEFAULTS, PictureStepConfig, PictureStepResult } from './p
 import { VideoStepConfig, VideoStepResult } from './video';
 import AudioStep from './audio';
 import LipsyncStep from './lipsync';
+import Step5FaceEdit from './step5_face_edit';
 
 function sanitizeWorkbenchProjectFolderName(name) {
   const raw = (name || '').trim();
@@ -36,6 +37,7 @@ const WORKBENCH_STEPS = [
   { id: 1, title: '生成影片' },
   { id: 2, title: '生成音訊' },
   { id: 3, title: '對口型' },
+  { id: 4, title: '人脸替换' },
 ];
 
 export default function Workbench() {
@@ -62,6 +64,14 @@ export default function Workbench() {
   const [videoAsset, setVideoAsset] = useState(null);
   const [audioAsset, setAudioAsset] = useState(null);
   const [videoResultUrl, setVideoResultUrl] = useState('');
+  const [step5Prompt, setStep5Prompt] = useState('');
+  const [step5KeepAudio, setStep5KeepAudio] = useState(true);
+  const [step5ShotType, setStep5ShotType] = useState('customize');
+  const [step5Elements, setStep5Elements] = useState([]);
+  const [step5PromptElements, setStep5PromptElements] = useState([]);
+  const [step5Generating, setStep5Generating] = useState(false);
+  const [step5ResultUrl, setStep5ResultUrl] = useState('');
+  const [step5Logs, setStep5Logs] = useState([]);
 
   // Step 1 (生成影片) parameters
   const [videoProvider, setVideoProvider] = useState('kling'); // kling | wan
@@ -77,6 +87,7 @@ export default function Workbench() {
     1: { images: [], video: null },
     2: { images: [], video: null },
     3: { images: [], video: null },
+    4: { images: [], video: null },
   });
 
   const [showAssetPicker, setShowAssetPicker] = useState(false);
@@ -88,8 +99,10 @@ export default function Workbench() {
   const [assetPickerDraft, setAssetPickerDraft] = useState({ images: [], video: null });
   const [isMentionPicker, setIsMentionPicker] = useState(false);
   const [mentionInsertPos, setMentionInsertPos] = useState(null);
+  const [mentionTargetStep, setMentionTargetStep] = useState(0);
   const [previewAsset, setPreviewAsset] = useState(null);
   const promptEditorRef = useRef(null);
+  const step5PromptEditorRef = useRef(null);
   const prevStepRef = useRef(0);
 
   /** fal-ai/nano-banana-2 (step 0) — user-facing fields; server merges the rest. */
@@ -121,7 +134,7 @@ export default function Workbench() {
   const updateStep = useCallback((next) => {
     setStep((current) => {
       const resolved = typeof next === 'function' ? next(current) : next;
-      const clamped = Math.max(0, Math.min(3, resolved));
+      const clamped = Math.max(0, Math.min(4, resolved));
       return clamped === current ? current : clamped;
     });
   }, []);
@@ -155,10 +168,19 @@ export default function Workbench() {
       1: { images: [], video: null },
       2: { images: [], video: null },
       3: { images: [], video: null },
+      4: { images: [], video: null },
     });
     setNanoBanana2({ ...NANO_BANANA2_DEFAULTS });
     setStep0GeneratedImageUrls([]);
     setPromptElements([]);
+    setStep5Prompt('');
+    setStep5KeepAudio(true);
+    setStep5ShotType('customize');
+    setStep5Elements([]);
+    setStep5PromptElements([]);
+    setStep5Generating(false);
+    setStep5ResultUrl('');
+    setStep5Logs([]);
   };
 
   const leaveProject = () => {
@@ -278,16 +300,18 @@ export default function Workbench() {
     }
   };
 
-  const openMentionAssetPicker = async (insertPos) => {
+  const openMentionAssetPicker = async (insertPos, targetStep = step) => {
     setIsMentionPicker(true);
     setMentionInsertPos(insertPos);
-    setAssetPickerTab('image');
+    setMentionTargetStep(targetStep);
+    const mentionKind = targetStep === 4 ? 'all' : 'image';
+    setAssetPickerTab(mentionKind);
     setShowAssetPicker(true);
     setAssetPickerLoading(true);
     setAssetPickerError('');
     setAssetPickerItems([]);
     try {
-      const res = await fetch(getApiUrl('/api/workbench/static-assets?kind=image&limit=300'));
+      const res = await fetch(getApiUrl(`/api/workbench/static-assets?kind=${mentionKind}&limit=300`));
       const data = await res.json();
       if (!res.ok) {
         const detail = typeof data?.detail === 'string' ? data.detail : '載入圖片素材失敗';
@@ -306,6 +330,7 @@ export default function Workbench() {
     setAssetPickerError('');
     setIsMentionPicker(false);
     setMentionInsertPos(null);
+    setMentionTargetStep(0);
   };
 
   const openPreviewAsset = (asset) => {
@@ -318,9 +343,11 @@ export default function Workbench() {
 
   const filteredAssetPickerItems = useMemo(() => {
     return assetPickerItems.filter((asset) => (
-      isMentionPicker ? asset.type === 'image' : (assetPickerTab === 'all' || asset.type === assetPickerTab)
+      isMentionPicker
+        ? (mentionTargetStep === 4 ? (asset.type === 'image' || asset.type === 'video') : asset.type === 'image')
+        : (assetPickerTab === 'all' || asset.type === assetPickerTab)
     ));
-  }, [assetPickerItems, isMentionPicker, assetPickerTab]);
+  }, [assetPickerItems, isMentionPicker, assetPickerTab, mentionTargetStep]);
 
   const serializePromptFromEditor = (root) => {
     if (!root) return '';
@@ -338,11 +365,11 @@ export default function Workbench() {
     return walk(root);
   };
 
-  const getCaretTextOffset = (root) => {
+  const getCaretTextOffset = (root, fallbackText = '') => {
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return (prompt || '').length;
+    if (!sel || sel.rangeCount === 0) return String(fallbackText || '').length;
     const range = sel.getRangeAt(0);
-    if (!root.contains(range.endContainer)) return (prompt || '').length;
+    if (!root.contains(range.endContainer)) return String(fallbackText || '').length;
     const preRange = range.cloneRange();
     preRange.selectNodeContents(root);
     preRange.setEnd(range.endContainer, range.endOffset);
@@ -381,8 +408,46 @@ export default function Workbench() {
     return html.replaceAll('\n', '<br>');
   };
 
+  const buildStep5PromptEditorHTML = (text) => {
+    const tokenRegex = /@(?:Image|Video)\d+/g;
+    let html = '';
+    let lastIndex = 0;
+    let match = tokenRegex.exec(text);
+    while (match) {
+      const full = match[0];
+      const element = step5PromptElements.find((item) => item.token === full);
+      html += escapeHtml(text.slice(lastIndex, match.index));
+      if (element?.url) {
+        const color = element.color || ELEMENT_BADGE_COLORS[(element.index || 0) % ELEMENT_BADGE_COLORS.length];
+        const previewNode = element.type === 'video'
+          ? `<video src="${escapeHtml(getApiUrl(element.url))}" class="w-8 h-8 rounded object-cover" muted loop playsinline></video>`
+          : `<img src="${escapeHtml(getApiUrl(element.url))}" alt="${escapeHtml(element.name || full)}" class="w-8 h-8 rounded object-cover" />`;
+        html += `<span contenteditable="false" data-token="${full}" class="inline-flex items-center gap-1 mx-0.5 px-1 py-0.5 rounded bg-white/10 border border-white/15 align-middle">
+  ${previewNode}
+  <span style="background:${color.bg};border:1px solid ${color.border};color:${color.text}" class="text-[10px] px-1 py-0.5 rounded">${escapeHtml(full)}</span>
+</span>`;
+      } else {
+        html += `<span contenteditable="false" data-token="${full}" class="inline-flex items-center mx-0.5 px-1 py-0.5 rounded bg-white/10 border border-white/15 text-[10px] text-zinc-300">${escapeHtml(full)}</span>`;
+      }
+      lastIndex = match.index + full.length;
+      match = tokenRegex.exec(text);
+    }
+    html += escapeHtml(text.slice(lastIndex));
+    return html.replaceAll('\n', '<br>');
+  };
+
   const resizePromptEditor = useCallback(() => {
     const el = promptEditorRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const sh = el.scrollHeight;
+    const nextH = Math.min(Math.max(sh, PROMPT_EDITOR_MIN_PX), PROMPT_EDITOR_MAX_PX);
+    el.style.height = `${nextH}px`;
+    el.style.overflowY = sh > PROMPT_EDITOR_MAX_PX ? 'auto' : 'hidden';
+  }, []);
+
+  const resizeStep5PromptEditor = useCallback(() => {
+    const el = step5PromptEditorRef.current;
     if (!el) return;
     el.style.height = 'auto';
     const sh = el.scrollHeight;
@@ -396,6 +461,11 @@ export default function Workbench() {
     requestAnimationFrame(() => resizePromptEditor());
   }, [project, step, resizePromptEditor]);
 
+  useLayoutEffect(() => {
+    if (!project || step !== 4) return;
+    requestAnimationFrame(() => resizeStep5PromptEditor());
+  }, [project, step, resizeStep5PromptEditor]);
+
   useEffect(() => {
     const editor = promptEditorRef.current;
     if (!editor) return;
@@ -404,6 +474,15 @@ export default function Workbench() {
     editor.innerHTML = buildPromptEditorHTML(prompt || '');
     requestAnimationFrame(() => resizePromptEditor());
   }, [prompt, promptElements, resizePromptEditor]);
+
+  useEffect(() => {
+    const editor = step5PromptEditorRef.current;
+    if (!editor) return;
+    const current = serializePromptFromEditor(editor);
+    if (current === (step5Prompt || '')) return;
+    editor.innerHTML = buildStep5PromptEditorHTML(step5Prompt || '');
+    requestAnimationFrame(() => resizeStep5PromptEditor());
+  }, [step5Prompt, step5PromptElements, resizeStep5PromptEditor]);
 
   const removePromptElement = async (removeIndex) => {
     setPrompt((prev) => {
@@ -420,6 +499,28 @@ export default function Workbench() {
   };
 
   const handleMentionAssetSelect = async (asset) => {
+    if (mentionTargetStep === 4) {
+      const insertPos = mentionInsertPos ?? step5Prompt.length;
+      const kind = asset?.type === 'video' ? 'video' : 'image';
+      const typeCount = step5PromptElements.filter((item) => item.type === kind).length;
+      const token = kind === 'video' ? `@Video${typeCount + 1}` : `@Image${typeCount + 1}`;
+      setStep5Prompt((prev) => `${prev.slice(0, insertPos)}${token}${prev.slice(insertPos)}`);
+      setStep5PromptElements((prev) => ([
+        ...prev,
+        {
+          index: prev.length,
+          token,
+          type: kind,
+          name: asset.name,
+          relative_path: asset.relative_path,
+          url: asset.url,
+          color: ELEMENT_BADGE_COLORS[Math.floor(Math.random() * ELEMENT_BADGE_COLORS.length)],
+        },
+      ]));
+      closeAssetPicker();
+      return;
+    }
+
     const insertPos = mentionInsertPos ?? prompt.length;
     const nextIndex = promptElements.length;
     const token = `Elements[${nextIndex}]`;
@@ -472,8 +573,11 @@ export default function Workbench() {
     }));
 
     // 與原有佔位資產欄位保持同步，便於後續流程沿用
-    if (nextSelected.images.length > 0) setImageAsset(nextSelected.images[0].url);
-    if (nextSelected.video) setVideoAsset(nextSelected.video.url);
+    // 仅同步 Step0/Step1 的占位资产，避免影响 Step5 独立流程。
+    if (assetPickerStep <= 1) {
+      if (nextSelected.images.length > 0) setImageAsset(nextSelected.images[0].url);
+      if (nextSelected.video) setVideoAsset(nextSelected.video.url);
+    }
 
     closeAssetPicker();
   };
@@ -497,6 +601,19 @@ export default function Workbench() {
     // If the preview is currently showing the removed asset, close it.
     if (previewAsset?.relative_path === relativePath) closePreviewAsset();
 
+  };
+
+  const clearSelectedVideo = (targetStep) => {
+    setSelectedStaticAssets((prev) => ({
+      ...prev,
+      [targetStep]: {
+        ...(prev[targetStep] || { images: [], video: null }),
+        video: null,
+      },
+    }));
+    if (targetStep <= 1) {
+      setVideoAsset(null);
+    }
   };
 
   const runSeedGeneration = async (targetStep) => {
@@ -643,6 +760,63 @@ export default function Workbench() {
     setVideoAsset(url);
   };
 
+  const handleStep5Generate = async () => {
+    const promptText = String(step5Prompt || '').trim();
+    const videoUrl = String((step5PromptElements.find((item) => item.type === 'video') || {}).url || '').trim();
+    const imageUrls = step5PromptElements
+      .filter((item) => item.type === 'image')
+      .map((item) => String(item?.url || '').trim())
+      .filter(Boolean);
+
+    if (!promptText) throw new Error('请输入 Step5 需求');
+    if (!videoUrl) throw new Error('请先在输入框中用 @ 插入至少一个视频素材（@Video1）');
+
+    const elementsPayload = (step5Elements || [])
+      .map((item) => {
+        const frontal = String(item?.frontal_image_url || '').trim();
+        const refs = String(item?.reference_image_urls_text || '')
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean);
+        return { frontal_image_url: frontal, reference_image_urls: refs };
+      })
+      .filter((item) => item.frontal_image_url);
+
+    setStep5Generating(true);
+    setStep5Logs(['开始提交 Step5 请求...']);
+    try {
+      const response = await fetch(getApiUrl('/api/workbench/kling/o3/video-edit'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: promptText,
+          video_url: videoUrl,
+          image_urls: imageUrls,
+          keep_audio: Boolean(step5KeepAudio),
+          shot_type: String(step5ShotType || 'customize').trim() || 'customize',
+          elements: elementsPayload,
+        }),
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch {
+        /* ignore */
+      }
+      if (!response.ok) {
+        const detail = typeof data?.detail === 'string' ? data.detail : `HTTP ${response.status}`;
+        throw new Error(detail);
+      }
+      const url = String(data?.video_url || '').trim();
+      if (!url) throw new Error('后端未返回 video_url');
+      setStep5ResultUrl(url);
+      const logs = Array.isArray(data?.logs) ? data.logs.filter(Boolean) : [];
+      setStep5Logs(logs.length ? logs : ['请求完成，未返回队列日志']);
+    } finally {
+      setStep5Generating(false);
+    }
+  };
+
   const handleGenerate = async (event) => {
     event.preventDefault();
     if (step > 1) return;
@@ -665,8 +839,8 @@ export default function Workbench() {
   const handlePromptKeyDown = (event) => {
     if (event.key === '@' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
-      const pos = getCaretTextOffset(promptEditorRef.current);
-      openMentionAssetPicker(pos);
+      const pos = getCaretTextOffset(promptEditorRef.current, prompt);
+      openMentionAssetPicker(pos, step);
       return;
     }
 
@@ -706,6 +880,34 @@ export default function Workbench() {
     if (dy < 0 && !atTop) e.stopPropagation();
     else if (dy > 0 && !atBottom) e.stopPropagation();
   }, []);
+
+  const handleStep5PromptInput = () => {
+    const el = step5PromptEditorRef.current;
+    const nextPrompt = serializePromptFromEditor(el);
+    setStep5Prompt(nextPrompt);
+    if (!nextPrompt.trim()) {
+      setStep5PromptElements([]);
+    }
+    requestAnimationFrame(() => resizeStep5PromptEditor());
+  };
+
+  const handleStep5PromptKeyDown = (event) => {
+    if (event.key === '@' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      const pos = getCaretTextOffset(step5PromptEditorRef.current, step5Prompt);
+      openMentionAssetPicker(pos, 4);
+      return;
+    }
+
+    if (event.key !== 'Enter' || event.isComposing) return;
+    if (event.ctrlKey) {
+      event.preventDefault();
+      document.execCommand('insertLineBreak');
+      const editor = step5PromptEditorRef.current;
+      setStep5Prompt(serializePromptFromEditor(editor));
+      requestAnimationFrame(() => resizeStep5PromptEditor());
+    }
+  };
 
   const renderBottomComposer = (targetStep, placeholder, buttonText, requirePrompt = true, showPromptTextarea = true) => (
     <div className="border border-white/10 bg-[#141418]/90 backdrop-blur-md rounded-xl p-3 min-w-0">
@@ -983,7 +1185,7 @@ export default function Workbench() {
               <button
                 type="button"
                 onClick={goNext}
-                disabled={step === 3}
+                disabled={step === 4}
                 className="btn-secondary flex-1 px-3 py-2 text-xs flex items-center justify-center gap-1 disabled:opacity-50"
               >
                 Next
@@ -1073,6 +1275,25 @@ export default function Workbench() {
                 {step === 3 && (
                   <LipsyncStep videoAsset={videoAsset} audioAsset={audioAsset} />
                 )}
+                {step === 4 && (
+                  <Step5FaceEdit
+                    prompt={step5Prompt}
+                    promptEditorRef={step5PromptEditorRef}
+                    onPromptInput={handleStep5PromptInput}
+                    onPromptKeyDown={handleStep5PromptKeyDown}
+                    onPromptWheel={handlePromptWheel}
+                    keepAudio={step5KeepAudio}
+                    setKeepAudio={setStep5KeepAudio}
+                    shotType={step5ShotType}
+                    setShotType={setStep5ShotType}
+                    elements={step5Elements}
+                    setElements={setStep5Elements}
+                    generating={step5Generating}
+                    resultUrl={step5ResultUrl}
+                    logs={step5Logs}
+                    onGenerate={handleStep5Generate}
+                  />
+                )}
               </div>
             </section>
           )}
@@ -1102,7 +1323,9 @@ export default function Workbench() {
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <h3 className="text-base font-bold text-white">
-                    {isMentionPicker ? '選擇圖片素材（插入 Elements）' : '選擇素材'}
+                    {isMentionPicker
+                      ? (mentionTargetStep === 4 ? '選擇素材（插入 @Image / @Video）' : '選擇圖片素材（插入 Elements）')
+                      : '選擇素材'}
                   </h3>
                   <p className="text-xs text-zinc-500 mt-1">
                     本地靜態資源目錄：透過服務端配置的 WORKBENCH_ASSETS_ROOT
@@ -1148,7 +1371,7 @@ export default function Workbench() {
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
                   {filteredAssetPickerItems.length === 0 ? (
                     <div className="text-sm text-zinc-500 border border-white/10 bg-white/5 rounded-xl p-4">
-                      未找到可用{isMentionPicker ? '圖片' : (assetPickerTab === 'all' ? '素材' : assetPickerTab === 'image' ? '圖片' : '影片')}，請先將檔案放到靜態素材目錄或 GitHub 倉庫。
+                      未找到可用{isMentionPicker ? (mentionTargetStep === 4 ? '素材' : '圖片') : (assetPickerTab === 'all' ? '素材' : assetPickerTab === 'image' ? '圖片' : '影片')}，請先將檔案放到靜態素材目錄或 GitHub 倉庫。
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
