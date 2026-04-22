@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Loader2, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, Sparkles } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 const LANGUAGE_BOOSTS = [
@@ -21,6 +21,7 @@ export default function AudioStep({ onSkipToLipsync, onAudioReady }) {
   const [languageBoost, setLanguageBoost] = useState('auto');
   const [outputFormat, setOutputFormat] = useState('url');
   const [toneList, setToneList] = useState(['']);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState('');
   const [durationMs, setDurationMs] = useState(null);
@@ -81,7 +82,6 @@ export default function AudioStep({ onSkipToLipsync, onAudioReady }) {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-white">生成音訊</h2>
-            <p className="text-xs text-zinc-500 mt-1">Step2：MiniMax Speech-02 HD 文字轉語音。</p>
           </div>
           <button
             type="button"
@@ -104,111 +104,126 @@ export default function AudioStep({ onSkipToLipsync, onAudioReady }) {
           />
         </div>
 
-        <div className="text-sm font-semibold text-zinc-200">語音設定</div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">語音 ID</label>
-            <input value={voiceId} onChange={(e) => setVoiceId(e.target.value)} className="input-field" placeholder="例如：Wise_Woman" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">情緒</label>
-            <input value={emotion} onChange={(e) => setEmotion(e.target.value)} className="input-field" placeholder="例如：neutral / happy" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">語速</label>
-            <input type="range" min="0.5" max="2" step="0.1" value={speed} onChange={(e) => setSpeed(e.target.value)} className="w-full" />
-            <div className="text-xs text-zinc-500 mt-1">{speed}</div>
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">音量</label>
-            <input type="range" min="0" max="10" step="0.1" value={vol} onChange={(e) => setVol(e.target.value)} className="w-full" />
-            <div className="text-xs text-zinc-500 mt-1">{vol}</div>
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">音高</label>
-            <input type="range" min="-12" max="12" step="1" value={pitch} onChange={(e) => setPitch(e.target.value)} className="w-full" />
-            <div className="text-xs text-zinc-500 mt-1">{pitch}</div>
-          </div>
-          <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-            <span className="text-xs text-zinc-300">英文正規化</span>
-            <button
-              type="button"
-              onClick={() => setEnglishNormalization((v) => !v)}
-              className={`w-10 h-6 rounded-full transition-colors ${englishNormalization ? 'bg-violet-500/70' : 'bg-zinc-700'}`}
-            >
-              <span
-                className={`block w-4 h-4 mt-1 rounded-full bg-white transition-transform ${
-                  englishNormalization ? 'translate-x-5' : 'translate-x-1'
-                }`}
-              />
-            </button>
-          </div>
-        </div>
+        <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="w-full flex items-center justify-between text-xs font-semibold text-zinc-300"
+          >
+            <span>高级</span>
+            {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
 
-        <div className="text-sm font-semibold text-zinc-200">音訊設定</div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">採樣率</label>
-            <input type="number" value={sampleRate} onChange={(e) => setSampleRate(e.target.value)} className="input-field" placeholder="例如：32000" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">位元率</label>
-            <input type="number" value={bitrate} onChange={(e) => setBitrate(e.target.value)} className="input-field" placeholder="例如：128000" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">格式</label>
-            <input value={audioFormat} onChange={(e) => setAudioFormat(e.target.value)} className="input-field" placeholder="例如：mp3 / wav" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">聲道</label>
-            <input type="number" value={channel} onChange={(e) => setChannel(e.target.value)} className="input-field" placeholder="例如：1 / 2" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">語言增強</label>
-            <select value={languageBoost} onChange={(e) => setLanguageBoost(e.target.value)} className="input-field">
-              {LANGUAGE_BOOSTS.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">輸出格式</label>
-            <select value={outputFormat} onChange={(e) => setOutputFormat(e.target.value)} className="input-field">
-              <option value="url">url</option>
-              <option value="hex">hex</option>
-            </select>
-          </div>
-        </div>
-
-        <div>
-          <div className="text-sm font-semibold text-zinc-200 mb-2">發音字典（Tone List）</div>
-          <div className="space-y-2">
-            {toneList.map((item, idx) => (
-              <div key={`tone-${idx}`} className="flex gap-2">
-                <input
-                  value={item}
-                  onChange={(e) => {
-                    const next = [...toneList];
-                    next[idx] = e.target.value;
-                    setToneList(next);
-                  }}
-                  className="input-field"
-                  placeholder="輸入 tone 條目"
-                />
-                <button
-                  type="button"
-                  onClick={() => setToneList((prev) => prev.filter((_, i) => i !== idx))}
-                  className="btn-secondary px-3 py-2 text-xs"
-                >
-                  刪除
-                </button>
+          {showAdvanced ? (
+            <div className="mt-3 space-y-4">
+              <div className="text-sm font-semibold text-zinc-200">語音設定</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">語音 ID</label>
+                  <input value={voiceId} onChange={(e) => setVoiceId(e.target.value)} className="input-field" placeholder="例如：Wise_Woman" />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">情緒</label>
+                  <input value={emotion} onChange={(e) => setEmotion(e.target.value)} className="input-field" placeholder="例如：neutral / happy" />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">語速</label>
+                  <input type="range" min="0.5" max="2" step="0.1" value={speed} onChange={(e) => setSpeed(e.target.value)} className="w-full" />
+                  <div className="text-xs text-zinc-500 mt-1">{speed}</div>
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">音量</label>
+                  <input type="range" min="0" max="10" step="0.1" value={vol} onChange={(e) => setVol(e.target.value)} className="w-full" />
+                  <div className="text-xs text-zinc-500 mt-1">{vol}</div>
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">音高</label>
+                  <input type="range" min="-12" max="12" step="1" value={pitch} onChange={(e) => setPitch(e.target.value)} className="w-full" />
+                  <div className="text-xs text-zinc-500 mt-1">{pitch}</div>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  <span className="text-xs text-zinc-300">英文正規化</span>
+                  <button
+                    type="button"
+                    onClick={() => setEnglishNormalization((v) => !v)}
+                    className={`w-10 h-6 rounded-full transition-colors ${englishNormalization ? 'bg-violet-500/70' : 'bg-zinc-700'}`}
+                  >
+                    <span
+                      className={`block w-4 h-4 mt-1 rounded-full bg-white transition-transform ${
+                        englishNormalization ? 'translate-x-5' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
-            ))}
-            <button type="button" onClick={() => setToneList((prev) => [...prev, ''])} className="btn-secondary px-3 py-2 text-xs">
-              + 新增條目
-            </button>
-          </div>
+
+              <div className="text-sm font-semibold text-zinc-200">音訊設定</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">採樣率</label>
+                  <input type="number" value={sampleRate} onChange={(e) => setSampleRate(e.target.value)} className="input-field" placeholder="例如：32000" />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">位元率</label>
+                  <input type="number" value={bitrate} onChange={(e) => setBitrate(e.target.value)} className="input-field" placeholder="例如：128000" />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">格式</label>
+                  <input value={audioFormat} onChange={(e) => setAudioFormat(e.target.value)} className="input-field" placeholder="例如：mp3 / wav" />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">聲道</label>
+                  <input type="number" value={channel} onChange={(e) => setChannel(e.target.value)} className="input-field" placeholder="例如：1 / 2" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">語言增強</label>
+                  <select value={languageBoost} onChange={(e) => setLanguageBoost(e.target.value)} className="input-field">
+                    {LANGUAGE_BOOSTS.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1">輸出格式</label>
+                  <select value={outputFormat} onChange={(e) => setOutputFormat(e.target.value)} className="input-field">
+                    <option value="url">url</option>
+                    <option value="hex">hex</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold text-zinc-200 mb-2">發音字典（Tone List）</div>
+                <div className="space-y-2">
+                  {toneList.map((item, idx) => (
+                    <div key={`tone-${idx}`} className="flex gap-2">
+                      <input
+                        value={item}
+                        onChange={(e) => {
+                          const next = [...toneList];
+                          next[idx] = e.target.value;
+                          setToneList(next);
+                        }}
+                        className="input-field"
+                        placeholder="輸入 tone 條目"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setToneList((prev) => prev.filter((_, i) => i !== idx))}
+                        className="btn-secondary px-3 py-2 text-xs"
+                      >
+                        刪除
+                      </button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setToneList((prev) => [...prev, ''])} className="btn-secondary px-3 py-2 text-xs">
+                    + 新增條目
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <button type="submit" disabled={loading || !text.trim()} className="btn-primary w-full py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">

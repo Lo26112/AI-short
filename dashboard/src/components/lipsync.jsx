@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 const SYNC_MODE_OPTIONS = ['cut_off', 'loop', 'bounce', 'silence', 'remap'];
@@ -23,6 +23,7 @@ export default function LipsyncStep({
   const [pickerItems, setPickerItems] = useState([]);
   const [pickerKind, setPickerKind] = useState('all');
   const [pickerTarget, setPickerTarget] = useState('video');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const filteredItems = useMemo(() => (
     pickerItems.filter((asset) => {
@@ -111,17 +112,30 @@ export default function LipsyncStep({
                 <p className="text-[11px] text-zinc-600">當前上一步音訊：{String(audioAsset || 'none')}</p>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-zinc-400">sync_mode</label>
-                <select
-                  value={lipsyncSyncMode}
-                  onChange={(e) => setLipsyncSyncMode(e.target.value)}
-                  className="input-field text-sm"
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className="w-full flex items-center justify-between text-xs font-semibold text-zinc-300"
                 >
-                  {SYNC_MODE_OPTIONS.map((mode) => (
-                    <option key={mode} value={mode}>{mode}</option>
-                  ))}
-                </select>
+                  <span>高级</span>
+                  {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                {showAdvanced ? (
+                  <div className="mt-3 space-y-1.5">
+                    <label className="block text-xs font-medium text-zinc-400">sync_mode</label>
+                    <select
+                      value={lipsyncSyncMode}
+                      onChange={(e) => setLipsyncSyncMode(e.target.value)}
+                      className="input-field text-sm"
+                    >
+                      {SYNC_MODE_OPTIONS.map((mode) => (
+                        <option key={mode} value={mode}>{mode}</option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-zinc-600">當音訊與影片時長不一致時的處理策略（預設：cut_off）</p>
+                  </div>
+                ) : null}
               </div>
             </div>
 
