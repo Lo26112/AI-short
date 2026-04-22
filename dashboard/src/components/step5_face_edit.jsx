@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronUp, Plus, Trash2 } from 'lucide-react';
 
 export default function Step5FaceEdit({
+  onBack,
   prompt,
   promptEditorRef,
   onPromptInput,
@@ -36,6 +37,14 @@ export default function Step5FaceEdit({
       <section className="lg:flex-[4] min-w-0 rounded-2xl border border-white/10 bg-white/5 p-4 overflow-y-auto custom-scrollbar">
         <div className="space-y-4">
           <div>
+            <button
+              type="button"
+              onClick={onBack}
+              className="mb-3 inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+            >
+              <ChevronLeft size={14} />
+              返回视频生成
+            </button>
             <h2 className="text-lg font-semibold text-white">人脸替换</h2>
           </div>
 

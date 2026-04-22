@@ -18,6 +18,7 @@ from generalprompt import router as generalprompt_router
 from workbench_video import router as workbench_video_router
 from workbench_rudio import router as workbench_rudio_router
 from workbench_step5 import router as workbench_step5_router
+from workbench_video_understanding import router as workbench_video_understanding_router
 
 load_dotenv()
 
@@ -113,6 +114,7 @@ app.include_router(generalprompt_router)
 app.include_router(workbench_video_router)
 app.include_router(workbench_rudio_router)
 app.include_router(workbench_step5_router)
+app.include_router(workbench_video_understanding_router)
 
 import httpx
 

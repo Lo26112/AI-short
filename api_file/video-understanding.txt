@@ -1,0 +1,163 @@
+# Video Understanding
+
+> A video understanding model to analyze video content and answer questions about what's happening in the video based on user prompts.
+
+
+## Overview
+
+- **Endpoint**: `https://fal.run/fal-ai/video-understanding`
+- **Model ID**: `fal-ai/video-understanding`
+- **Category**: vision
+- **Kind**: inference
+**Tags**: utility, vision
+
+
+
+## Pricing
+
+- **Price**: $0.01 per 5 seconds
+
+For more details, see [fal.ai pricing](https://fal.ai/pricing).
+
+## API Information
+
+This model can be used via our HTTP API or more conveniently via our client libraries.
+See the input and output schema below, as well as the usage examples.
+
+
+### Input Schema
+
+The API accepts the following input parameters:
+
+
+- **`video_url`** (`string`, _required_):
+  URL of the video to analyze
+  - Examples: "https://v3.fal.media/files/elephant/mLAMkUTxFMbe2xF0qpLdA_Ll9mDE8webFA6GAu3vD_M_71ee7217db1d4aa4af1d2f1ae060389b.mp4"
+
+- **`prompt`** (`string`, _required_):
+  The question or prompt about the video content.
+  - Examples: "What is happening in this video?"
+
+- **`detailed_analysis`** (`boolean`, _optional_):
+  Whether to request a more detailed analysis of the video
+  - Default: `false`
+
+
+
+**Required Parameters Example**:
+
+```json
+{
+  "video_url": "https://v3.fal.media/files/elephant/mLAMkUTxFMbe2xF0qpLdA_Ll9mDE8webFA6GAu3vD_M_71ee7217db1d4aa4af1d2f1ae060389b.mp4",
+  "prompt": "What is happening in this video?"
+}
+```
+
+
+### Output Schema
+
+The API returns the following output format:
+
+- **`output`** (`string`, _required_):
+  The analysis of the video content based on the prompt
+  - Examples: "Based on the video, a woman is singing passionately into a microphone in what appears to be a professional recording studio. She is wearing headphones, and behind her, there are sound-dampening foam panels, a mixing board, and other studio equipment."
+
+
+
+**Example Response**:
+
+```json
+{
+  "output": "Based on the video, a woman is singing passionately into a microphone in what appears to be a professional recording studio. She is wearing headphones, and behind her, there are sound-dampening foam panels, a mixing board, and other studio equipment."
+}
+```
+
+
+## Usage Examples
+
+### cURL
+
+```bash
+curl --request POST \
+  --url https://fal.run/fal-ai/video-understanding \
+  --header "Authorization: Key $FAL_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{
+     "video_url": "https://v3.fal.media/files/elephant/mLAMkUTxFMbe2xF0qpLdA_Ll9mDE8webFA6GAu3vD_M_71ee7217db1d4aa4af1d2f1ae060389b.mp4",
+     "prompt": "What is happening in this video?"
+   }'
+```
+
+### Python
+
+Ensure you have the Python client installed:
+
+```bash
+pip install fal-client
+```
+
+Then use the API client to make requests:
+
+```python
+import fal_client
+
+def on_queue_update(update):
+    if isinstance(update, fal_client.InProgress):
+        for log in update.logs:
+           print(log["message"])
+
+result = fal_client.subscribe(
+    "fal-ai/video-understanding",
+    arguments={
+        "video_url": "https://v3.fal.media/files/elephant/mLAMkUTxFMbe2xF0qpLdA_Ll9mDE8webFA6GAu3vD_M_71ee7217db1d4aa4af1d2f1ae060389b.mp4",
+        "prompt": "What is happening in this video?"
+    },
+    with_logs=True,
+    on_queue_update=on_queue_update,
+)
+print(result)
+```
+
+### JavaScript
+
+Ensure you have the JavaScript client installed:
+
+```bash
+npm install --save @fal-ai/client
+```
+
+Then use the API client to make requests:
+
+```javascript
+import { fal } from "@fal-ai/client";
+
+const result = await fal.subscribe("fal-ai/video-understanding", {
+  input: {
+    video_url: "https://v3.fal.media/files/elephant/mLAMkUTxFMbe2xF0qpLdA_Ll9mDE8webFA6GAu3vD_M_71ee7217db1d4aa4af1d2f1ae060389b.mp4",
+    prompt: "What is happening in this video?"
+  },
+  logs: true,
+  onQueueUpdate: (update) => {
+    if (update.status === "IN_PROGRESS") {
+      update.logs.map((log) => log.message).forEach(console.log);
+    }
+  },
+});
+console.log(result.data);
+console.log(result.requestId);
+```
+
+
+## Additional Resources
+
+### Documentation
+
+- [Model Playground](https://fal.ai/models/fal-ai/video-understanding)
+- [API Documentation](https://fal.ai/models/fal-ai/video-understanding/api)
+- [OpenAPI Schema](https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/video-understanding)
+
+### fal.ai Platform
+
+- [Platform Documentation](https://docs.fal.ai)
+- [Python Client](https://docs.fal.ai/clients/python)
+- [JavaScript Client](https://docs.fal.ai/clients/javascript)
