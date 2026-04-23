@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Bookmark, ChevronLeft, ChevronRight, FolderPlus, Loader2, Sparkles, Trash2, X } from 'lucide-react';
-import { getApiUrl } from '../config';
+import { getApiUrl, getStaticAssetInlineUrl } from '../config';
 import { NANO_BANANA2_DEFAULTS, PictureStepConfig, PictureStepResult } from './picture';
 import { VideoStepConfig, VideoStepResult } from './video';
 import AudioStep from './audio';
@@ -404,7 +404,7 @@ export default function Workbench() {
       if (element?.url) {
         const color = element.color || ELEMENT_BADGE_COLORS[idx % ELEMENT_BADGE_COLORS.length];
         html += `<span contenteditable="false" data-token="${full}" class="inline-flex items-center gap-1 mx-0.5 px-1 py-0.5 rounded bg-white/10 border border-white/15 align-middle">
-  <img src="${escapeHtml(getApiUrl(element.url))}" alt="${escapeHtml(element.name || full)}" class="w-8 h-8 rounded object-cover" />
+  <img src="${escapeHtml(element.relative_path ? getStaticAssetInlineUrl(element.relative_path) : getApiUrl(element.url))}" alt="${escapeHtml(element.name || full)}" class="w-8 h-8 rounded object-cover" />
   <span style="background:${color.bg};border:1px solid ${color.border};color:${color.text}" class="text-[10px] px-1 py-0.5 rounded">${escapeHtml(full)}</span>
 </span>`;
       } else {
@@ -429,8 +429,8 @@ export default function Workbench() {
       if (element?.url) {
         const color = element.color || ELEMENT_BADGE_COLORS[(element.index || 0) % ELEMENT_BADGE_COLORS.length];
         const previewNode = element.type === 'video'
-          ? `<video src="${escapeHtml(getApiUrl(element.url))}" class="w-8 h-8 rounded object-cover" muted loop playsinline></video>`
-          : `<img src="${escapeHtml(getApiUrl(element.url))}" alt="${escapeHtml(element.name || full)}" class="w-8 h-8 rounded object-cover" />`;
+          ? `<video src="${escapeHtml(element.relative_path ? getStaticAssetInlineUrl(element.relative_path) : getApiUrl(element.url))}" class="w-8 h-8 rounded object-cover" muted loop playsinline></video>`
+          : `<img src="${escapeHtml(element.relative_path ? getStaticAssetInlineUrl(element.relative_path) : getApiUrl(element.url))}" alt="${escapeHtml(element.name || full)}" class="w-8 h-8 rounded object-cover" />`;
         html += `<span contenteditable="false" data-token="${full}" class="inline-flex items-center gap-1 mx-0.5 px-1 py-0.5 rounded bg-white/10 border border-white/15 align-middle">
   ${previewNode}
   <span style="background:${color.bg};border:1px solid ${color.border};color:${color.text}" class="text-[10px] px-1 py-0.5 rounded">${escapeHtml(full)}</span>
@@ -1463,9 +1463,21 @@ export default function Workbench() {
                         >
                           <div className="aspect-video bg-black/40 flex items-center justify-center">
                             {asset.type === 'image' ? (
-                              <img src={getApiUrl(asset.url)} alt={asset.name} className="w-full h-full object-cover" />
+                              <img
+                                src={getStaticAssetInlineUrl(asset.relative_path)}
+                                alt={asset.name}
+                                className="w-full h-full object-cover"
+                                loading="lazy"
+                                decoding="async"
+                              />
                             ) : (
-                              <video src={getApiUrl(asset.url)} className="w-full h-full object-cover" muted />
+                              <video
+                                src={getStaticAssetInlineUrl(asset.relative_path)}
+                                className="w-full h-full object-cover"
+                                muted
+                                playsInline
+                                preload="metadata"
+                              />
                             )}
                           </div>
                           <div className="p-2">
@@ -1526,7 +1538,11 @@ export default function Workbench() {
                 </button>
               </div>
               <div className="rounded-xl overflow-hidden border border-white/10 bg-black/30 max-h-[70vh] flex items-center justify-center">
-                <img src={getApiUrl(previewAsset.url)} alt={previewAsset.name} className="max-w-full max-h-[70vh] object-contain" />
+                <img
+                  src={getStaticAssetInlineUrl(previewAsset.relative_path)}
+                  alt={previewAsset.name}
+                  className="max-w-full max-h-[70vh] object-contain"
+                />
               </div>
             </div>
           </div>

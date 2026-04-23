@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Clapperboard, Globe, Sparkles } from 'lucide-react';
+import { Clapperboard, FolderOpen, Globe, Sparkles } from 'lucide-react';
 import Workbench from './components/Workbench';
 import VideoAnalysisPage from './components/video_analysis_page';
+import MaterialLibrary from './components/MaterialLibrary';
 
 function App() {
   // 清理舊版瀏覽器儲存的密鑰（現由服務端 config 提供）
@@ -61,6 +62,23 @@ function App() {
           </div>
           <span className="mt-2 text-[11px] font-medium leading-none">分析</span>
         </button>
+        <button
+          onClick={() => setActiveTab('material-library')}
+          className={`w-full flex flex-col items-center justify-center px-2 py-3 rounded-2xl transition-colors ${
+            activeTab === 'material-library' ? 'bg-white/10 text-white' : 'text-zinc-400 hover:bg-white/5'
+          }`}
+        >
+          <div
+            className={`w-10 h-10 rounded-2xl flex items-center justify-center border transition-colors ${
+              activeTab === 'material-library'
+                ? 'bg-violet-500/15 border-violet-500/25 text-violet-300'
+                : 'bg-white/5 border-white/10 text-zinc-300'
+            }`}
+          >
+            <FolderOpen size={18} />
+          </div>
+          <span className="mt-2 text-[11px] font-medium leading-none">素材库</span>
+        </button>
       </nav>
 
       <div className="p-3 border-t border-white/5 space-y-2">
@@ -94,7 +112,13 @@ function App() {
         </header>
 
         <div className="flex-1 overflow-hidden relative">
-          {activeTab === 'video-analysis' ? <VideoAnalysisPage /> : <Workbench />}
+          {activeTab === 'video-analysis' ? (
+            <VideoAnalysisPage />
+          ) : activeTab === 'material-library' ? (
+            <MaterialLibrary />
+          ) : (
+            <Workbench />
+          )}
         </div>
 
         <div className="h-8 border-t border-white/5 flex items-center justify-center shrink-0">

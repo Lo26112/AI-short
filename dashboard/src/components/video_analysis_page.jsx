@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Clapperboard, Loader2, Sparkles, X } from 'lucide-react';
-import { getApiUrl } from '../config';
+import { getApiUrl, getStaticAssetInlineUrl } from '../config';
 
 function VideoAnalysisStep({
   urlInput,
@@ -284,7 +284,13 @@ export default function VideoAnalysisPage() {
                     }`}
                   >
                     <div className="rounded-lg overflow-hidden border border-white/10 bg-black/30 aspect-video">
-                      <video src={getApiUrl(asset.url)} className="w-full h-full object-cover" muted playsInline />
+                      <video
+                        src={getStaticAssetInlineUrl(asset.relative_path)}
+                        className="w-full h-full object-cover"
+                        muted
+                        playsInline
+                        preload="metadata"
+                      />
                     </div>
                     <div className="mt-2 text-xs text-zinc-300 truncate">{asset.name}</div>
                     <div className="text-[11px] text-zinc-500 truncate">{asset.relative_path}</div>
