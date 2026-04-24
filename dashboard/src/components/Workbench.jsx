@@ -879,6 +879,9 @@ export default function Workbench() {
     try {
       if (targetStep === 0) await handleImageGenerationFlow();
       if (targetStep === 1) await handleVideoGenerationFlow();
+      // Each run should start from a clean composer so @ references do not leak.
+      setPrompt('');
+      setPromptElements([]);
       await new Promise((r) => setTimeout(r, 300));
     } catch (err) {
       window.alert(err.message || '發送失敗');

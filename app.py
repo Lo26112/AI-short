@@ -2,6 +2,7 @@ import os
 import shutil
 import asyncio
 import re
+import base64
 from urllib.parse import quote, unquote
 from dotenv import load_dotenv
 from typing import Optional
@@ -10,7 +11,7 @@ from api_keys import (
     get_upload_post_default_username,
 )
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -32,7 +33,7 @@ WORKBENCH_PROJECTS_ROOT = os.environ.get("WORKBENCH_PROJECTS_ROOT", os.path.join
 WORKBENCH_ASSETS_ROOT = os.environ.get("WORKBENCH_ASSETS_ROOT", os.path.join(OUTPUT_DIR, "workbench_assets"))
 WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL = os.environ.get(
     "WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL",
-    "https://raw.githubusercontent.com/SuWeiheng200317/AI-shorts_Static_Resources/main",
+    "https://raw.githubusercontent.com/SuWeiheng200317/AI-shorts_Static_Resources/refs/heads/main",
 ).rstrip("/")
 WORKBENCH_GITHUB_REPO_API_TREE_URL = os.environ.get(
     "WORKBENCH_GITHUB_REPO_API_TREE_URL",
@@ -142,11 +143,65 @@ def _sanitize_workbench_project_folder_name(name: str) -> str:
 def _safe_relpath(path: str) -> str:
     return path.replace("\\", "/")
 
+def _sanitize_workbench_asset_filename(name: str) -> str:
+    raw = (name or "").strip()
+    if not raw:
+        raise ValueError("empty")
+    if "/" in raw or "\\" in raw or ".." in raw:
+        raise ValueError("invalid")
+    safe = re.sub(r'[<>:"|?*\x00-\x1f]', "_", raw).strip()
+    safe = safe.strip(" .")
+    if len(safe) > 200:
+        safe = safe[:200].rstrip()
+    if not safe:
+        raise ValueError("empty")
+    return safe
+
+def _detect_workbench_asset_type_by_ext(ext: str) -> Optional[str]:
+    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    video_exts = {".mp4", ".mov", ".webm", ".mkv"}
+    audio_exts = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg"}
+    ext_l = (ext or "").lower()
+    if ext_l in image_exts:
+        return "image"
+    if ext_l in video_exts:
+        return "video"
+    if ext_l in audio_exts:
+        return "audio"
+    return None
+
+def _github_api_base() -> str:
+    return "https://api.github.com"
+
+def _github_repo_owner_and_name():
+    # Default to the same repo as the static assets base url
+    # raw base looks like https://raw.githubusercontent.com/<owner>/<repo>/<branch>
+    try:
+        m = re.match(r"^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/", WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL)
+        if m:
+            return m.group(1), m.group(2)
+    except Exception:
+        pass
+    return "SuWeiheng200317", "AI-shorts_Static_Resources"
+
 
 def _build_github_asset_url(rel_url_path: str) -> str:
+    # Normalize configured base into raw.githubusercontent refs/heads style.
+    base = WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL
+    m_blob = re.match(r"^https?://github\.com/([^/]+)/([^/]+)/(?:blob|tree)/([^/]+)$", base)
+    if m_blob:
+        owner, repo, branch = m_blob.group(1), m_blob.group(2), m_blob.group(3)
+        base = f"https://raw.githubusercontent.com/{owner}/{repo}/refs/heads/{branch}"
+    else:
+        m_raw_legacy = re.match(r"^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)$", base)
+        if m_raw_legacy:
+            owner, repo, branch = m_raw_legacy.group(1), m_raw_legacy.group(2), m_raw_legacy.group(3)
+            if branch != "refs":
+                base = f"https://raw.githubusercontent.com/{owner}/{repo}/refs/heads/{branch}"
+
     # Keep "/" separators while encoding special characters in each segment.
     encoded_path = "/".join(quote(part) for part in rel_url_path.split("/"))
-    return f"{WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL}/{encoded_path}"
+    return f"{base}/{encoded_path}"
 
 
 def _collect_workbench_assets(kind: str, limit: int):
@@ -378,16 +433,87 @@ async def workbench_static_assets(kind: str = "all", limit: int = 100):
     if kind not in allowed:
         raise HTTPException(status_code=400, detail=f"kind must be one of: {', '.join(sorted(allowed))}")
     safe_limit = max(1, min(limit, 500))
-    try:
-        assets = await _collect_workbench_assets_from_github_tree_page(kind, safe_limit)
-        if not assets:
-            print("⚠️ GitHub tree page returned no assets, fallback to local assets")
+    assets = []
+    if GITHUB_TOKEN:
+        try:
+            assets = await _collect_workbench_assets_from_github(kind, safe_limit)
+        except Exception as e:
+            print(f"⚠️ GitHub API tree failed, will try fallbacks: {e}")
+            assets = []
+    if not assets:
+        try:
+            assets = await _collect_workbench_assets_from_github_tree_page(kind, safe_limit)
+        except Exception as e:
+            print(f"⚠️ GitHub tree page parse failed, will try local: {e}")
+            assets = []
+    if not assets:
+        try:
             assets = _collect_workbench_assets(kind, safe_limit)
-    except Exception as e:
-        # Final fallback to local directory scan if GitHub page parsing is unavailable.
-        print(f"⚠️ GitHub tree page parse failed, fallback to local assets: {e}")
-        assets = _collect_workbench_assets(kind, safe_limit)
+        except Exception as e:
+            print(f"⚠️ Local assets scan failed: {e}")
+            assets = []
     return {"assets": assets}
+
+
+@app.post("/api/workbench/static-assets/upload")
+async def workbench_upload_static_asset(file: UploadFile = File(...)):
+    if not GITHUB_TOKEN:
+        raise HTTPException(status_code=500, detail="Missing GITHUB_TOKEN on server")
+
+    try:
+        safe_name = _sanitize_workbench_asset_filename(file.filename or "")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    ext = os.path.splitext(safe_name)[1].lower()
+    asset_type = _detect_workbench_asset_type_by_ext(ext)
+    if not asset_type:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    data = await file.read()
+    max_bytes = 20 * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="File too large (max 20MB)")
+
+    owner, repo = _github_repo_owner_and_name()
+    branch = "main"
+    path = safe_name  # root directory only (no subfolders)
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "AI-short-main-workbench",
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Check if file exists
+        exists_url = f"{_github_api_base()}/repos/{owner}/{repo}/contents/{quote(path)}"
+        resp = await client.get(exists_url, headers=headers, params={"ref": branch})
+        if resp.status_code == 200:
+            raise HTTPException(status_code=409, detail="A file with the same name already exists")
+        if resp.status_code not in (404,):
+            raise HTTPException(status_code=resp.status_code, detail=f"GitHub check failed: {resp.text}")
+
+        put_url = f"{_github_api_base()}/repos/{owner}/{repo}/contents/{quote(path)}"
+        payload = {
+            "message": f"Upload asset: {safe_name}",
+            "content": base64.b64encode(data).decode("utf-8"),
+            "branch": branch,
+        }
+        put_resp = await client.put(put_url, headers=headers, json=payload)
+        if put_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=put_resp.status_code, detail=f"GitHub upload failed: {put_resp.text}")
+
+    rel_url_path = _safe_relpath(path)
+    return {
+        "asset": {
+            "type": asset_type,
+            "name": safe_name,
+            "relative_path": rel_url_path,
+            "url": _build_github_asset_url(rel_url_path),
+            "mtime": 0,
+        }
+    }
 @app.get("/api/social/user")
 async def get_social_user(
     x_upload_post_key: Optional[str] = Header(None, alias="X-Upload-Post-Key"),
