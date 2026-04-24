@@ -374,6 +374,26 @@ export default function Workbench() {
     return walk(root);
   };
 
+  const normalizePromptWithElements = (rawPrompt, currentElements) => {
+    const tokenRegex = /Elements\[(\d+)\]/g;
+    const nextElements = [];
+    const seenIndexMap = new Map();
+    const normalizedPrompt = String(rawPrompt || '').replace(tokenRegex, (_full, idxStr) => {
+      const oldIdx = Number(idxStr);
+      if (!Number.isInteger(oldIdx) || oldIdx < 0) return '';
+      if (seenIndexMap.has(oldIdx)) {
+        return `Elements[${seenIndexMap.get(oldIdx)}]`;
+      }
+      const source = currentElements?.[oldIdx];
+      if (!source?.url) return '';
+      const newIdx = nextElements.length;
+      seenIndexMap.set(oldIdx, newIdx);
+      nextElements.push({ ...source, index: newIdx });
+      return `Elements[${newIdx}]`;
+    });
+    return { prompt: normalizedPrompt, elements: nextElements };
+  };
+
   const getCaretTextOffset = (root, fallbackText = '') => {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return String(fallbackText || '').length;
@@ -443,6 +463,34 @@ export default function Workbench() {
     }
     html += escapeHtml(text.slice(lastIndex));
     return html.replaceAll('\n', '<br>');
+  };
+
+  const normalizeStep5PromptElements = (rawPrompt, currentElements) => {
+    const tokenRegex = /@(Image|Video)(\d+)/g;
+    const nextElements = [];
+    const seenTokenMap = new Map();
+    let imageCount = 0;
+    let videoCount = 0;
+    const normalizedPrompt = String(rawPrompt || '').replace(tokenRegex, (full) => {
+      if (seenTokenMap.has(full)) {
+        return seenTokenMap.get(full);
+      }
+      const source = (currentElements || []).find((item) => item?.token === full && item?.url);
+      if (!source) return '';
+      const kind = source.type === 'video' ? 'video' : 'image';
+      const nextToken = kind === 'video' ? `@Video${videoCount + 1}` : `@Image${imageCount + 1}`;
+      if (kind === 'video') videoCount += 1;
+      else imageCount += 1;
+      seenTokenMap.set(full, nextToken);
+      nextElements.push({
+        ...source,
+        index: nextElements.length,
+        token: nextToken,
+        type: kind,
+      });
+      return nextToken;
+    });
+    return { prompt: normalizedPrompt, elements: nextElements };
   };
 
   const resizePromptEditor = useCallback(() => {
@@ -819,6 +867,8 @@ export default function Workbench() {
       const url = String(data?.video_url || '').trim();
       if (!url) throw new Error('后端未返回 video_url');
       setStep5ResultUrl(url);
+      setStep5Prompt('');
+      setStep5PromptElements([]);
       const logs = Array.isArray(data?.logs) ? data.logs.filter(Boolean) : [];
       setStep5Logs(logs.length ? logs : ['请求完成，未返回队列日志']);
     } finally {
@@ -879,6 +929,8 @@ export default function Workbench() {
     try {
       if (targetStep === 0) await handleImageGenerationFlow();
       if (targetStep === 1) await handleVideoGenerationFlow();
+      setPrompt('');
+      setPromptElements([]);
       await new Promise((r) => setTimeout(r, 300));
     } catch (err) {
       window.alert(err.message || '發送失敗');
@@ -934,11 +986,10 @@ export default function Workbench() {
 
   const handleStep5PromptInput = () => {
     const el = step5PromptEditorRef.current;
-    const nextPrompt = serializePromptFromEditor(el);
-    setStep5Prompt(nextPrompt);
-    if (!nextPrompt.trim()) {
-      setStep5PromptElements([]);
-    }
+    const rawPrompt = serializePromptFromEditor(el);
+    const { prompt: normalizedPrompt, elements: normalizedElements } = normalizeStep5PromptElements(rawPrompt, step5PromptElements);
+    setStep5Prompt(normalizedPrompt);
+    setStep5PromptElements(normalizedElements);
     requestAnimationFrame(() => resizeStep5PromptEditor());
   };
 
@@ -955,7 +1006,10 @@ export default function Workbench() {
       event.preventDefault();
       document.execCommand('insertLineBreak');
       const editor = step5PromptEditorRef.current;
-      setStep5Prompt(serializePromptFromEditor(editor));
+      const rawPrompt = serializePromptFromEditor(editor);
+      const { prompt: normalizedPrompt, elements: normalizedElements } = normalizeStep5PromptElements(rawPrompt, step5PromptElements);
+      setStep5Prompt(normalizedPrompt);
+      setStep5PromptElements(normalizedElements);
       requestAnimationFrame(() => resizeStep5PromptEditor());
     }
   };
@@ -973,12 +1027,10 @@ export default function Workbench() {
             suppressContentEditableWarning
             onInput={() => {
               const el = promptEditorRef.current;
-              const nextPrompt = serializePromptFromEditor(el);
-              setPrompt(nextPrompt);
-              if (!nextPrompt.trim()) {
-                // Input box fully cleared: reset referenced @ assets as well.
-                setPromptElements([]);
-              }
+              const rawPrompt = serializePromptFromEditor(el);
+              const { prompt: normalizedPrompt, elements: normalizedElements } = normalizePromptWithElements(rawPrompt, promptElements);
+              setPrompt(normalizedPrompt);
+              setPromptElements(normalizedElements);
               requestAnimationFrame(() => resizePromptEditor());
             }}
             onKeyDown={handlePromptKeyDown}

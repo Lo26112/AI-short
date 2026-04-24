@@ -34,7 +34,7 @@ WORKBENCH_PROJECTS_ROOT = os.environ.get("WORKBENCH_PROJECTS_ROOT", os.path.join
 WORKBENCH_ASSETS_ROOT = os.environ.get("WORKBENCH_ASSETS_ROOT", os.path.join(OUTPUT_DIR, "workbench_assets"))
 WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL = os.environ.get(
     "WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL",
-    "https://raw.githubusercontent.com/SuWeiheng200317/AI-shorts_Static_Resources/main",
+    "https://raw.githubusercontent.com/SuWeiheng200317/AI-shorts_Static_Resources/refs/heads/main",
 ).rstrip("/")
 WORKBENCH_GITHUB_REPO_API_TREE_URL = os.environ.get(
     "WORKBENCH_GITHUB_REPO_API_TREE_URL",
@@ -159,9 +159,22 @@ def _safe_relpath(path: str) -> str:
 
 
 def _build_github_asset_url(rel_url_path: str) -> str:
+     # Normalize configured base into raw.githubusercontent refs/heads style.
+    base = WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL
+    m_blob = re.match(r"^https?://github\.com/([^/]+)/([^/]+)/(?:blob|tree)/([^/]+)$", base)
+    if m_blob:
+        owner, repo, branch = m_blob.group(1), m_blob.group(2), m_blob.group(3)
+        base = f"https://raw.githubusercontent.com/{owner}/{repo}/refs/heads/{branch}"
+    else:
+        m_raw_legacy = re.match(r"^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)$", base)
+        if m_raw_legacy:
+            owner, repo, branch = m_raw_legacy.group(1), m_raw_legacy.group(2), m_raw_legacy.group(3)
+            if branch != "refs":
+                base = f"https://raw.githubusercontent.com/{owner}/{repo}/refs/heads/{branch}"
     # Keep "/" separators while encoding special characters in each segment.
     encoded_path = "/".join(quote(part) for part in rel_url_path.split("/"))
-    return f"{WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL}/{encoded_path}"
+    # return f"{WORKBENCH_GITHUB_ASSETS_RAW_BASE_URL}/{encoded_path}"
+    return f"{base}/{encoded_path}"
 
 
 def _ext_to_asset_type(ext: str) -> Optional[str]:

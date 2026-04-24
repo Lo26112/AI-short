@@ -14,6 +14,15 @@ export const getApiUrl = (path) => {
 /** 与后端 /api/workbench/static-assets/inline 一致：GitHub 私有仓需服务端 GITHUB_TOKEN，避免浏览器直链 raw 无法鉴权。 */
 export function getStaticAssetInlineUrl(relativePath) {
     if (!relativePath) return '';
+    // External URLs (or browser-local blobs/data URLs) should be used directly.
+    // Only workspace relative paths should go through the inline proxy endpoint.
+    if (
+        /^https?:\/\//i.test(relativePath) ||
+        relativePath.startsWith('data:') ||
+        relativePath.startsWith('blob:')
+    ) {
+        return relativePath;
+    }
     return getApiUrl(
         `/api/workbench/static-assets/inline?relative_path=${encodeURIComponent(relativePath)}`
     );
