@@ -22,6 +22,7 @@ from workbench_rudio import router as workbench_rudio_router
 from workbench_step5 import router as workbench_step5_router
 from workbench_video_understanding import router as workbench_video_understanding_router
 from workbench_lipsync import router as workbench_lipsync_router
+from inspiration import router as workbench_inspiration_router
 
 load_dotenv()
 
@@ -132,6 +133,7 @@ app.include_router(workbench_rudio_router)
 app.include_router(workbench_step5_router)
 app.include_router(workbench_video_understanding_router)
 app.include_router(workbench_lipsync_router)
+app.include_router(workbench_inspiration_router)
 
 import httpx
 
@@ -156,6 +158,14 @@ def _sanitize_workbench_project_folder_name(name: str) -> str:
 
 def _safe_relpath(path: str) -> str:
     return path.replace("\\", "/")
+
+
+def _category_from_rel_url_path(rel_url_path: str) -> Optional[str]:
+    raw = (rel_url_path or "").strip().replace("\\", "/")
+    if not raw:
+        return None
+    parts = [p for p in raw.split("/") if p and p not in (".", "..")]
+    return parts[0] if parts else None
 
 
 def _build_github_asset_url(rel_url_path: str) -> str:
@@ -335,6 +345,7 @@ def _collect_workbench_assets(kind: str, limit: int):
             rel_url_path = _safe_relpath(rel_path)
             items.append({
                 "type": asset_type,
+                "category": _category_from_rel_url_path(rel_url_path),
                 "name": filename,
                 "relative_path": rel_url_path,
                 "url": _build_github_asset_url(rel_url_path),
@@ -374,6 +385,7 @@ async def _collect_workbench_assets_from_github(kind: str, limit: int):
         rel_url_path = _safe_relpath(path)
         items.append({
             "type": asset_type,
+            "category": _category_from_rel_url_path(rel_url_path),
             "name": filename,
             "relative_path": rel_url_path,
             "url": _build_github_asset_url(rel_url_path),
@@ -410,6 +422,7 @@ async def _collect_workbench_assets_from_github_tree_page(kind: str, limit: int)
             continue
         items.append({
             "type": asset_type,
+            "category": _category_from_rel_url_path(rel_url_path),
             "name": filename,
             "relative_path": rel_url_path,
             "url": _build_github_asset_url(rel_url_path),

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Clapperboard, FolderOpen, Globe, Sparkles } from 'lucide-react';
+import { Clapperboard, FolderOpen, Globe, Lightbulb, Sparkles } from 'lucide-react';
 import Workbench from './components/Workbench';
 import VideoAnalysisPage from './components/video_analysis_page';
 import MaterialLibrary from './components/MaterialLibrary';
+import InspireUI from './components/InspireUI';
 
 function App() {
   // 清理舊版瀏覽器儲存的密鑰（現由服務端 config 提供）
@@ -28,6 +29,23 @@ function App() {
       </div>
 
       <nav className="flex-1 px-3 py-3 space-y-2">
+        <button
+          onClick={() => setActiveTab('inspiration')}
+          className={`w-full flex flex-col items-center justify-center px-2 py-3 rounded-2xl transition-colors ${
+            activeTab === 'inspiration' ? 'bg-white/10 text-white' : 'text-zinc-400 hover:bg-white/5'
+          }`}
+        >
+          <div
+            className={`w-10 h-10 rounded-2xl flex items-center justify-center border transition-colors ${
+              activeTab === 'inspiration'
+                ? 'bg-violet-500/15 border-violet-500/25 text-violet-300'
+                : 'bg-white/5 border-white/10 text-zinc-300'
+            }`}
+          >
+            <Lightbulb size={18} />
+          </div>
+          <span className="mt-2 text-[11px] font-medium leading-none">灵感</span>
+        </button>
         <button
           onClick={() => setActiveTab('workbench')}
           className={`w-full flex flex-col items-center justify-center px-2 py-3 rounded-2xl transition-colors ${
@@ -112,7 +130,9 @@ function App() {
         </header>
 
         <div className="flex-1 overflow-hidden relative">
-          {activeTab === 'video-analysis' ? (
+          {activeTab === 'inspiration' ? (
+            <InspireUI />
+          ) : activeTab === 'video-analysis' ? (
             <VideoAnalysisPage />
           ) : activeTab === 'material-library' ? (
             <MaterialLibrary />

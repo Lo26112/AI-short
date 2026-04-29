@@ -4,9 +4,11 @@ import { getApiUrl, getStaticAssetInlineUrl } from '../config';
 
 const TABS = [
   { id: 'all', label: '全部' },
-  { id: 'image', label: '图片' },
-  { id: 'video', label: '视频' },
-  { id: 'audio', label: '音频' },
+  { id: '发型', label: '发型' },
+  { id: '服装', label: '服装' },
+  { id: '素材图片', label: '素材图片' },
+  { id: '素材视频', label: '素材视频' },
+  { id: '素材音频', label: '素材音频' },
 ];
 
 const typeLabel = (t) => {
@@ -57,7 +59,7 @@ export default function MaterialLibrary() {
 
   const filtered = useMemo(() => {
     if (tab === 'all') return items;
-    return items.filter((a) => a.type === tab);
+    return items.filter((a) => (a.category || a.type) === tab);
   }, [items, tab]);
 
   const downloadAsset = (asset) => {
